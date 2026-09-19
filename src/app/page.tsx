@@ -5,16 +5,23 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
 type AuthMode = "signup" | "login" | "reset";
+type DashboardTab = "home" | "earn" | "games" | "refer" | "wallet";
 
 export default function Home() {
-  const [mode, setMode] = useState<AuthMode>("signup");
+  const [authMode, setAuthMode] = useState<AuthMode>("signup");
+  const [user, setUser] = useState<User | null>(null);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [referralCode, setReferralCode] = useState("");
+
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [user, setUser] = useState<User | null>(null);
+
+  const [activeTab, setActiveTab] = useState<DashboardTab>("home");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -37,7 +44,7 @@ export default function Home() {
     };
   }, []);
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleAuth(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMessage("");
 
@@ -46,12 +53,12 @@ export default function Home() {
       return;
     }
 
-    if (!password) {
+    if (authMode !== "reset" && !password) {
       setMessage("Please enter your password.");
       return;
     }
 
-    if (mode === "signup" && password !== confirmPassword) {
+    if (authMode === "signup" && password !== confirmPassword) {
       setMessage("Passwords do not match.");
       return;
     }
@@ -59,7 +66,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      if (mode === "signup") {
+      if (authMode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -72,20 +79,23 @@ export default function Home() {
 
         if (data.session && data.user) {
           setUser(data.user);
+          setActiveTab("home");
+          setPassword("");
+          setConfirmPassword("");
           return;
         }
 
         setMessage(
-          "Account created successfully. Check your email if confirmation is required."
+          "Account created. Check your email if email confirmation is required."
         );
 
-        setMode("login");
+        setAuthMode("login");
         setPassword("");
         setConfirmPassword("");
         return;
       }
 
-      if (mode === "login") {
+      if (authMode === "login") {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password,
@@ -98,6 +108,7 @@ export default function Home() {
 
         if (data.user) {
           setUser(data.user);
+          setActiveTab("home");
           setPassword("");
           setConfirmPassword("");
         }
@@ -117,9 +128,7 @@ export default function Home() {
         return;
       }
 
-      setMessage(
-        "Password reset instructions have been sent to your email."
-      );
+      setMessage("Password reset instructions have been sent to your email.");
     } catch {
       setMessage("Something went wrong. Please try again.");
     } finally {
@@ -127,154 +136,386 @@ export default function Home() {
     }
   }
 
-  async function handleLogout() {
+  async function logout() {
     await supabase.auth.signOut();
 
     setUser(null);
     setEmail("");
     setPassword("");
     setConfirmPassword("");
+    setReferralCode("");
     setMessage("");
-    setMode("login");
+    setAuthMode("login");
+    setActiveTab("home");
   }
 
-  if (user) {
+  async function copyReferralLink() {
+    if (!user) return;
+
+    const code =
+      referralCode.trim() ||
+      user.id.slice(0, 8).toUpperCase();
+
+    const link = `${window.location.origin}/?ref=${code}`;
+
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+
+      setTimeout(() => {
+        setCopied(false);
+      }, 2000);
+    } catch {
+      setMessage("Unable to copy the referral link.");
+    }
+  }
+
+  function renderHome() {
+    return (
+      <>
+        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 shadow-2xl backdrop-blur-xl">
+          <p className="text-sm text-slate-300">Welcome back 👋</p>
+
+          <h2 className="mt-1 break-all text-xl font-black">
+            {user?.email}
+          </h2>
+
+          <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+            <p className="text-xs font-bold uppercase tracking-wide text-yellow-200">
+              Current Balance
+            </p>
+
+            <p className="mt-2 text-4xl font-black text-yellow-400">
+              ₦0.00
+            </p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs text-slate-400">Today's Earnings</p>
+              <p className="mt-2 text-xl font-black">₦0.00</p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs text-slate-400">Total Earned</p>
+              <p className="mt-2 text-xl font-black">₦0.00</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+          <h3 className="text-lg font-black">Quick Actions</h3>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setActiveTab("earn")}
+              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+            >
+              <span className="text-2xl">🎯</span>
+              <span className="mt-2 block font-black">Earn</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                Start earning
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("games")}
+              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+            >
+              <span className="text-2xl">🎮</span>
+              <span className="mt-2 block font-black">Games</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                Play & participate
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("refer")}
+              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+            >
+              <span className="text-2xl">👥</span>
+              <span className="mt-2 block font-black">Refer</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                Invite friends
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("wallet")}
+              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+            >
+              <span className="text-2xl">💰</span>
+              <span className="mt-2 block font-black">Wallet</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                Balance & withdrawals
+              </span>
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  function renderEarn() {
+    return (
+      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+        <p className="text-sm text-yellow-300">EARNING</p>
+
+        <h2 className="mt-1 text-2xl font-black">
+          Earn on TapBumber
+        </h2>
+
+        <p className="mt-2 text-sm leading-6 text-slate-300">
+          Your earning activities will appear here. Each activity can be
+          opened and completed from this section.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+          <p className="font-black">Daily Activities</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Activities will be connected to your account next.
+          </p>
+
+          <button
+            onClick={() =>
+              setMessage("Earning activities are being connected.")
+            }
+            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+          >
+            VIEW ACTIVITIES
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderGames() {
+    return (
+      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+        <p className="text-sm text-yellow-300">GAMES</p>
+
+        <h2 className="mt-1 text-2xl font-black">
+          TapBumber Games
+        </h2>
+
+        <div className="mt-5 space-y-3">
+          {[
+            ["🎯", "Tap Challenge"],
+            ["🧠", "Quick Quiz"],
+            ["🔢", "Number Challenge"],
+          ].map(([icon, name]) => (
+            <button
+              key={name}
+              onClick={() =>
+                setMessage(`${name} will open here.`)
+              }
+              className="flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-left active:scale-[0.98]"
+            >
+              <span className="text-2xl">{icon}</span>
+
+              <span>
+                <span className="block font-black">{name}</span>
+                <span className="text-xs text-slate-400">
+                  Tap to open
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderRefer() {
+    const code =
+      user?.id.slice(0, 8).toUpperCase() || "TAPUSER";
+
+    const link =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/?ref=${code}`
+        : `?ref=${code}`;
+
+    return (
+      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+        <p className="text-sm text-yellow-300">REFERRALS</p>
+
+        <h2 className="mt-1 text-2xl font-black">
+          Invite & Earn
+        </h2>
+
+        <p className="mt-2 text-sm leading-6 text-slate-300">
+          Share your referral link with people you genuinely want to
+          invite to TapBumber.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p className="text-xs text-slate-400">Your Referral Code</p>
+
+          <p className="mt-2 text-xl font-black text-yellow-400">
+            {code}
+          </p>
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p className="text-xs text-slate-400">Referral Link</p>
+
+          <p className="mt-2 break-all text-sm text-slate-200">
+            {link}
+          </p>
+        </div>
+
+        <button
+          onClick={copyReferralLink}
+          className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-4 font-black text-black active:scale-[0.98]"
+        >
+          {copied ? "COPIED ✅" : "COPY REFERRAL LINK"}
+        </button>
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <p className="text-sm font-black">Referral Earnings</p>
+          <p className="mt-1 text-2xl font-black">₦0.00</p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderWallet() {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-3xl border border-yellow-400/20 bg-black/55 p-5 backdrop-blur-xl">
+          <p className="text-sm text-yellow-300">WALLET</p>
+
+          <h2 className="mt-1 text-2xl font-black">
+            Your Balance
+          </h2>
+
+          <p className="mt-5 text-4xl font-black text-yellow-400">
+            ₦0.00
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+          <h3 className="text-lg font-black">
+            Withdraw
+          </h3>
+
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            Your withdrawal account and eligibility will be connected
+            here.
+          </p>
+
+          <button
+            onClick={() =>
+              setMessage("Withdrawal will be connected next.")
+            }
+            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-4 font-black text-black active:scale-95"
+          >
+            WITHDRAW
+          </button>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+          <h3 className="text-lg font-black">
+            Transactions
+          </h3>
+
+          <p className="mt-2 text-sm text-slate-400">
+            No transactions yet.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderDashboard() {
     return (
       <main className="min-h-screen bg-[#030712] text-white">
         <section
           className="relative min-h-screen overflow-hidden bg-cover bg-center"
           style={{
             backgroundImage:
-              "linear-gradient(rgba(2,6,23,0.5),rgba(2,6,23,0.92)),url('/tapbumber-bg.png')",
+              "linear-gradient(rgba(2,6,23,0.48),rgba(2,6,23,0.93)),url('/tapbumber-bg.png')",
           }}
         >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.2),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(250,204,21,0.12),transparent_35%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.18),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(250,204,21,0.10),transparent_35%)]" />
 
-          <div className="relative z-10 mx-auto min-h-screen max-w-md px-5 py-7">
+          <div className="relative z-10 mx-auto min-h-screen max-w-md px-4 pb-28 pt-5">
             <header className="flex items-center justify-between">
               <div>
-                <h1 className="text-3xl font-black tracking-tight">
+                <h1 className="text-2xl font-black tracking-tight">
                   TAP<span className="text-yellow-400">BUMBER</span>
                 </h1>
 
-                <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.28em] text-blue-200">
+                <p className="text-[9px] font-bold uppercase tracking-[0.25em] text-blue-200">
                   Tap • Earn • Grow
                 </p>
               </div>
 
               <button
-                type="button"
-                onClick={handleLogout}
-                className="rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs font-bold text-slate-200"
+                onClick={logout}
+                className="rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs font-black"
               >
                 LOGOUT
               </button>
             </header>
 
-            <div className="mt-8">
-              <div className="rounded-3xl border border-white/10 bg-black/55 p-6 shadow-2xl backdrop-blur-xl">
-                <p className="text-sm text-slate-300">Welcome back 👋</p>
-
-                <h2 className="mt-1 break-all text-xl font-black">
-                  {user.email}
-                </h2>
-
-                <div className="mt-6 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
-                  <p className="text-sm font-bold text-yellow-200">
-                    Current Balance
-                  </p>
-
-                  <p className="mt-2 text-4xl font-black text-yellow-400">
-                    ₦0.00
-                  </p>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs text-slate-400">
-                      Total Earned
-                    </p>
-
-                    <p className="mt-2 text-xl font-black">
-                      ₦0.00
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs text-slate-400">
-                      Referral Earnings
-                    </p>
-
-                    <p className="mt-2 text-xl font-black">
-                      ₦0.00
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <h3 className="text-lg font-black">
-                    Your TapBumber
-                  </h3>
-
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left"
-                    >
-                      🎮
-                      <span className="mt-2 block text-sm font-black">
-                        Games
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left"
-                    >
-                      🎯
-                      <span className="mt-2 block text-sm font-black">
-                        Activities
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left"
-                    >
-                      👥
-                      <span className="mt-2 block text-sm font-black">
-                        Invite
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left"
-                    >
-                      💸
-                      <span className="mt-2 block text-sm font-black">
-                        Withdraw
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-6 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-4">
-                  <p className="text-sm font-bold text-blue-100">
-                    Your account is ready.
-                  </p>
-
-                  <p className="mt-1 text-xs leading-5 text-slate-300">
-                    Your earnings, activities, referrals and transactions
-                    will be connected to this account.
-                  </p>
-                </div>
-              </div>
+            <div className="mt-6">
+              {activeTab === "home" && renderHome()}
+              {activeTab === "earn" && renderEarn()}
+              {activeTab === "games" && renderGames()}
+              {activeTab === "refer" && renderRefer()}
+              {activeTab === "wallet" && renderWallet()}
             </div>
+
+            {message && (
+              <div className="fixed bottom-24 left-4 right-4 z-50 mx-auto max-w-md rounded-2xl border border-yellow-400/20 bg-black/90 p-3 text-center text-sm text-yellow-200 shadow-2xl">
+                {message}
+
+                <button
+                  onClick={() => setMessage("")}
+                  className="ml-3 font-black text-yellow-400"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            <nav className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md border-t border-white/10 bg-[#030712]/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
+              <div className="grid grid-cols-5 gap-1">
+                {[
+                  ["home", "🏠", "Home"],
+                  ["earn", "🎯", "Earn"],
+                  ["games", "🎮", "Games"],
+                  ["refer", "👥", "Refer"],
+                  ["wallet", "💰", "Wallet"],
+                ].map(([tab, icon, label]) => (
+                  <button
+                    key={tab}
+                    onClick={() =>
+                      setActiveTab(tab as DashboardTab)
+                    }
+                    className={`rounded-2xl px-1 py-2 text-center transition active:scale-95 ${
+                      activeTab === tab
+                        ? "bg-yellow-400 text-black"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    <span className="block text-lg">{icon}</span>
+                    <span className="mt-1 block text-[10px] font-black">
+                      {label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </nav>
           </div>
         </section>
       </main>
     );
+  }
+
+  if (user) {
+    return renderDashboard();
   }
 
   return (
@@ -288,39 +529,39 @@ export default function Home() {
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(37,99,235,0.2),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(250,204,21,0.12),transparent_35%)]" />
 
-        <div className="relative z-10 mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-8">
-          <div className="mb-8 text-center">
-            <h1 className="text-4xl font-black tracking-tight">
+        <div className="relative z-10 mx-auto flex min-h-screen max-w-md flex-col justify-center px-5 py-6">
+          <div className="mb-5 text-center">
+            <h1 className="text-3xl font-black tracking-tight">
               TAP<span className="text-yellow-400">BUMBER</span>
             </h1>
 
-            <p className="mt-2 text-xs font-bold uppercase tracking-[0.25em] text-blue-200">
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-200">
               Tap • Earn • Grow
             </p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-black/55 p-6 shadow-2xl backdrop-blur-xl">
-            <div className="mb-6 text-center">
+          <div className="rounded-3xl border border-white/10 bg-black/55 p-5 shadow-2xl backdrop-blur-xl">
+            <div className="mb-5 text-center">
               <h2 className="text-2xl font-black">
-                {mode === "signup"
+                {authMode === "signup"
                   ? "Create Your Account"
-                  : mode === "login"
+                  : authMode === "login"
                     ? "Welcome Back"
                     : "Reset Password"}
               </h2>
 
               <p className="mt-2 text-sm text-slate-300">
-                {mode === "signup"
+                {authMode === "signup"
                   ? "Join TapBumber and start your journey."
-                  : mode === "login"
+                  : authMode === "login"
                     ? "Login to continue to your TapBumber account."
-                    : "Enter your email to receive a password reset link."}
+                    : "Enter your email to reset your password."}
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleAuth} className="space-y-3">
               <div>
-                <label className="mb-2 block text-sm font-bold">
+                <label className="mb-1.5 block text-sm font-bold">
                   Email address
                 </label>
 
@@ -330,13 +571,13 @@ export default function Home() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Enter your email"
                   autoComplete="email"
-                  className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
+                  className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
                 />
               </div>
 
-              {mode !== "reset" && (
+              {authMode !== "reset" && (
                 <div>
-                  <label className="mb-2 block text-sm font-bold">
+                  <label className="mb-1.5 block text-sm font-bold">
                     Password
                   </label>
 
@@ -345,19 +586,19 @@ export default function Home() {
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Create a TapBumber password"
+                      placeholder="Create your TapBumber password"
                       autoComplete={
-                        mode === "signup"
+                        authMode === "signup"
                           ? "new-password"
                           : "current-password"
                       }
-                      className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 pr-20 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
+                      className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 pr-20 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
                     />
 
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs font-bold text-yellow-400"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-black text-yellow-400"
                     >
                       {showPassword ? "HIDE" : "SHOW"}
                     </button>
@@ -365,21 +606,45 @@ export default function Home() {
                 </div>
               )}
 
-              {mode === "signup" && (
-                <div>
-                  <label className="mb-2 block text-sm font-bold">
-                    Confirm password
-                  </label>
+              {authMode === "signup" && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-bold">
+                      Confirm password
+                    </label>
 
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Confirm your password"
-                    autoComplete="new-password"
-                    className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
-                  />
-                </div>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(e) =>
+                        setConfirmPassword(e.target.value)
+                      }
+                      placeholder="Confirm your password"
+                      autoComplete="new-password"
+                      className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-bold">
+                      Referral code
+                      <span className="ml-2 text-xs font-normal text-slate-500">
+                        Optional
+                      </span>
+                    </label>
+
+                    <input
+                      type="text"
+                      value={referralCode}
+                      onChange={(e) =>
+                        setReferralCode(e.target.value)
+                      }
+                      placeholder="Enter referral code"
+                      autoComplete="off"
+                      className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white uppercase outline-none placeholder:text-slate-400 focus:border-yellow-400"
+                    />
+                  </div>
+                </>
               )}
 
               {message && (
@@ -391,43 +656,43 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-6 py-4 text-lg font-black text-black shadow-[0_0_35px_rgba(250,204,21,0.2)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-5 py-4 text-base font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.18)] transition active:scale-[0.98] disabled:opacity-60"
               >
                 {loading
                   ? "PLEASE WAIT..."
-                  : mode === "signup"
+                  : authMode === "signup"
                     ? "SIGN UP 🚀"
-                    : mode === "login"
+                    : authMode === "login"
                       ? "LOGIN 🔐"
                       : "SEND RESET LINK 📧"}
               </button>
             </form>
 
-            <div className="mt-5 text-center text-sm text-slate-300">
-              {mode === "login" && (
+            {authMode === "login" && (
+              <div className="mt-4 text-center">
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("reset");
+                    setAuthMode("reset");
                     setMessage("");
                     setPassword("");
                     setConfirmPassword("");
                   }}
-                  className="font-black text-yellow-400"
+                  className="text-sm font-black text-yellow-400"
                 >
                   Forgot password?
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
             <div className="mt-4 text-center text-sm text-slate-300">
-              {mode === "signup" ? (
+              {authMode === "signup" ? (
                 <>
                   Already have an account?{" "}
                   <button
                     type="button"
                     onClick={() => {
-                      setMode("login");
+                      setAuthMode("login");
                       setMessage("");
                     }}
                     className="font-black text-yellow-400"
@@ -441,7 +706,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => {
-                      setMode("signup");
+                      setAuthMode("signup");
                       setMessage("");
                     }}
                     className="font-black text-yellow-400"
@@ -453,8 +718,8 @@ export default function Home() {
             </div>
           </div>
 
-          <p className="mt-6 text-center text-xs text-slate-400">
-            TapBumber • Earn from eligible activities and track your progress.
+          <p className="mt-4 text-center text-[11px] text-slate-500">
+            TapBumber • Tap • Earn • Grow
           </p>
         </div>
       </section>
