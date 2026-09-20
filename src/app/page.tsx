@@ -7,6 +7,14 @@ import type { User } from "@supabase/supabase-js";
 type AuthMode = "signup" | "login" | "reset";
 type DashboardTab = "home" | "earn" | "games" | "refer" | "wallet";
 
+type Activity = {
+  id: string;
+  icon: string;
+  title: string;
+  description: string;
+  reward: string;
+};
+
 export default function Home() {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [user, setUser] = useState<User | null>(null);
@@ -24,6 +32,8 @@ export default function Home() {
     useState<DashboardTab>("home");
 
   const [copied, setCopied] = useState(false);
+  const [showActivities, setShowActivities] =
+    useState(false);
 
   /*
    * ---------------------------------------------------------
@@ -85,6 +95,7 @@ export default function Home() {
 
         if (event === "SIGNED_OUT") {
           setActiveTab("home");
+          setShowActivities(false);
         }
       }
     );
@@ -367,6 +378,7 @@ export default function Home() {
 
       setUser(null);
       setActiveTab("home");
+      setShowActivities(false);
 
       setEmail("");
       setPassword("");
@@ -580,44 +592,128 @@ export default function Home() {
    */
 
   function renderEarn() {
+    const activities: Activity[] = [
+      {
+        id: "daily-tap",
+        icon: "👆",
+        title: "Daily Tap",
+        description:
+          "Complete your daily tap activity.",
+        reward: "₦10",
+      },
+      {
+        id: "daily-check",
+        icon: "✅",
+        title: "Daily Check-In",
+        description:
+          "Check in today to participate.",
+        reward: "₦10",
+      },
+      {
+        id: "community",
+        icon: "💬",
+        title: "Community Activity",
+        description:
+          "Visit the TapBumber community.",
+        reward: "₦10",
+      },
+    ];
+
     return (
-      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
-        <p className="text-sm text-yellow-300">
-          EARNING
-        </p>
-
-        <h2 className="mt-1 text-2xl font-black">
-          Earn on TapBumber
-        </h2>
-
-        <p className="mt-2 text-sm leading-6 text-slate-300">
-          Your earning activities will appear
-          here. Each activity can be opened and
-          completed from this section.
-        </p>
-
-        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-          <p className="font-black">
-            Daily Activities
+      <div className="space-y-4">
+        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+          <p className="text-sm text-yellow-300">
+            EARNING
           </p>
 
-          <p className="mt-1 text-xs text-slate-400">
-            Activities will be connected to
-            your account next.
+          <h2 className="mt-1 text-2xl font-black">
+            Earn on TapBumber
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            Complete available activities and
+            participate in TapBumber to earn.
           </p>
 
-          <button
-            type="button"
-            onClick={() =>
-              setMessage(
-                "Earning activities are being connected."
-              )
-            }
-            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
-          >
-            VIEW ACTIVITIES
-          </button>
+          <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-black">
+                  Daily Activities
+                </p>
+
+                <p className="mt-1 text-xs text-slate-400">
+                  Available activities for today
+                </p>
+              </div>
+
+              <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
+                {activities.length}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowActivities(
+                  !showActivities
+                )
+              }
+              className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+            >
+              {showActivities
+                ? "HIDE ACTIVITIES"
+                : "VIEW ACTIVITIES"}
+            </button>
+          </div>
         </div>
+
+        {showActivities && (
+          <div className="space-y-3">
+            {activities.map((activity) => (
+              <div
+                key={activity.id}
+                className="rounded-3xl border border-white/10 bg-black/55 p-4 backdrop-blur-xl"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 text-2xl">
+                    {activity.icon}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-black">
+                          {activity.title}
+                        </h3>
+
+                        <p className="mt-1 text-xs leading-5 text-slate-400">
+                          {activity.description}
+                        </p>
+                      </div>
+
+                      <span className="shrink-0 text-sm font-black text-yellow-400">
+                        {activity.reward}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMessage(
+                          `${activity.title} is ready to be connected to the earning system.`
+                        )
+                      }
+                      className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95"
+                    >
+                      OPEN ACTIVITY
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
