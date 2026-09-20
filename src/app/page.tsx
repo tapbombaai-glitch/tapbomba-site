@@ -196,12 +196,6 @@ export default function Home() {
           );
         }
 
-        /*
-         * If Supabase immediately gives
-         * the new user a session, go directly
-         * to the dashboard.
-         */
-
         if (data.session?.user) {
           setUser(data.session.user);
           setActiveTab("home");
@@ -216,10 +210,6 @@ export default function Home() {
 
           return;
         }
-
-        /*
-         * Email confirmation is required.
-         */
 
         setPassword("");
         setConfirmPassword("");
@@ -255,11 +245,6 @@ export default function Home() {
           return;
         }
 
-        /*
-         * Explicitly retrieve the current
-         * Supabase session.
-         */
-
         const {
           data: sessionData,
           error: sessionError,
@@ -290,11 +275,6 @@ export default function Home() {
 
           return;
         }
-
-        /*
-         * Successful login:
-         * immediately show the dashboard.
-         */
 
         setUser(loggedInUser);
         setActiveTab("home");
@@ -541,10 +521,12 @@ export default function Home() {
             </button>
 
             <button
-  type="button"
-  onClick={() => setActiveTab("refer")}
-  className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
->
+              type="button"
+              onClick={() =>
+                setActiveTab("refer")
+              }
+              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+            >
               <span className="text-2xl">
                 👥
               </span>
@@ -597,7 +579,7 @@ export default function Home() {
         title: "Daily Tap",
         description:
           "Complete your daily tap activity.",
-        reward: "₦10",
+        reward: "ACTIVITY",
       },
       {
         id: "daily-check",
@@ -605,7 +587,7 @@ export default function Home() {
         title: "Daily Check-In",
         description:
           "Check in today to participate.",
-        reward: "₦10",
+        reward: "ACTIVITY",
       },
       {
         id: "community",
@@ -613,9 +595,37 @@ export default function Home() {
         title: "Community Activity",
         description:
           "Visit the TapBumber community.",
-        reward: "₦10",
+        reward: "COMMUNITY",
       },
     ];
+
+    function openActivity(activity: Activity) {
+      if (activity.id === "community") {
+        window.open(
+          "https://chat.whatsapp.com/FU2IG0W8kt3CKRrOAFql0d",
+          "_blank",
+          "noopener,noreferrer"
+        );
+
+        return;
+      }
+
+      if (activity.id === "daily-tap") {
+        setMessage(
+          "Daily Tap will be connected to the TapBumber earning system next."
+        );
+
+        return;
+      }
+
+      if (activity.id === "daily-check") {
+        setMessage(
+          "Daily Check-In will be connected to the TapBumber earning system next."
+        );
+
+        return;
+      }
+    }
 
     return (
       <div className="space-y-4">
@@ -690,7 +700,7 @@ export default function Home() {
                         </p>
                       </div>
 
-                      <span className="shrink-0 text-sm font-black text-yellow-400">
+                      <span className="shrink-0 text-xs font-black text-yellow-400">
                         {activity.reward}
                       </span>
                     </div>
@@ -698,9 +708,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() =>
-                        setMessage(
-                          `${activity.title} is ready to be connected to the earning system.`
-                        )
+                        openActivity(activity)
                       }
                       className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95"
                     >
@@ -1056,14 +1064,6 @@ export default function Home() {
       </main>
     );
   }
-
-  /*
-   * ---------------------------------------------------------
-   * IMPORTANT:
-   * If a user is logged in, show the dashboard.
-   * Otherwise show login/signup/reset.
-   * ---------------------------------------------------------
-   */
 
   if (user) {
     return renderDashboard();
