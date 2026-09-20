@@ -541,12 +541,10 @@ export default function Home() {
             </button>
 
             <button
-              type="button"
-              onClick={() =>
-                setActiveTab("refer")
-              }
-              className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
-            >
+  type="button"
+  onClick={() => setActiveTab("refer")}
+  className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
+>
               <span className="text-2xl">
                 👥
               </span>
