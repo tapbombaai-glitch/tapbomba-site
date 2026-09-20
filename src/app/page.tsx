@@ -566,119 +566,178 @@ export default function Home() {
   }
 
   /*
-   * ---------------------------------------------------------
-   * EARN
-   * ---------------------------------------------------------
-   */
+ * ---------------------------------------------------------
+ * EARN
+ * ---------------------------------------------------------
+ */
 
-  function renderEarn() {
-    const activities: Activity[] = [
-      {
-        id: "daily-tap",
-        icon: "👆",
-        title: "Daily Tap",
-        description:
-          "Complete your daily tap activity.",
-        reward: "ACTIVITY",
-      },
-      {
-        id: "daily-check",
-        icon: "✅",
-        title: "Daily Check-In",
-        description:
-          "Check in today to participate.",
-        reward: "ACTIVITY",
-      },
-      {
-        id: "community",
-        icon: "💬",
-        title: "Community Activity",
-        description:
-          "Visit the TapBumber community.",
-        reward: "COMMUNITY",
-      },
-    ];
+function renderEarn() {
+  const activities: Activity[] = [
+    {
+      id: "daily-tap",
+      icon: "👆",
+      title: "Daily Tap",
+      description:
+        "Complete your daily tap activity.",
+      reward: "ACTIVITY",
+    },
+    {
+      id: "daily-check",
+      icon: "✅",
+      title: "Daily Check-In",
+      description:
+        "Check in once each day.",
+      reward: "DAILY",
+    },
+    {
+      id: "community",
+      icon: "💬",
+      title: "Community Activity",
+      description:
+        "Visit the TapBumber community.",
+      reward: "COMMUNITY",
+    },
+  ];
 
-    function openActivity(activity: Activity) {
-      if (activity.id === "community") {
-        window.open(
-          "https://chat.whatsapp.com/FU2IG0W8kt3CKRrOAFql0d",
-          "_blank",
-          "noopener,noreferrer"
-        );
+  function getTodayKey() {
+    const now = new Date();
 
-        return;
-      }
+    const year = now.getFullYear();
+    const month = String(
+      now.getMonth() + 1
+    ).padStart(2, "0");
+    const day = String(
+      now.getDate()
+    ).padStart(2, "0");
 
-      if (activity.id === "daily-tap") {
-        setMessage(
-          "Daily Tap will be connected to the TapBumber earning system next."
-        );
+    return `${year}-${month}-${day}`;
+  }
 
-        return;
-      }
+  function hasCheckedInToday() {
+    if (!user) return false;
 
-      if (activity.id === "daily-check") {
-        setMessage(
-          "Daily Check-In will be connected to the TapBumber earning system next."
-        );
+    const saved =
+      localStorage.getItem(
+        `tapbumber_daily_checkin_${user.id}`
+      );
 
-        return;
-      }
+    return saved === getTodayKey();
+  }
+
+  function completeDailyCheckIn() {
+    if (!user) return;
+
+    const today = getTodayKey();
+
+    const saved =
+      localStorage.getItem(
+        `tapbumber_daily_checkin_${user.id}`
+      );
+
+    if (saved === today) {
+      setMessage(
+        "You have already checked in today. Come back tomorrow! ✅"
+      );
+
+      return;
     }
 
-    return (
-      <div className="space-y-4">
-        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
-          <p className="text-sm text-yellow-300">
-            EARNING
-          </p>
+    localStorage.setItem(
+      `tapbumber_daily_checkin_${user.id}`,
+      today
+    );
 
-          <h2 className="mt-1 text-2xl font-black">
-            Earn on TapBumber
-          </h2>
+    setMessage(
+      "Daily Check-In completed successfully! ✅"
+    );
+  }
 
-          <p className="mt-2 text-sm leading-6 text-slate-300">
-            Complete available activities and
-            participate in TapBumber to earn.
-          </p>
+  function openActivity(
+    activity: Activity
+  ) {
+    if (activity.id === "community") {
+      window.open(
+        "https://chat.whatsapp.com/FU2IG0W8kt3CKRrOAFql0d",
+        "_blank",
+        "noopener,noreferrer"
+      );
 
-          <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-black">
-                  Daily Activities
-                </p>
+      return;
+    }
 
-                <p className="mt-1 text-xs text-slate-400">
-                  Available activities for today
-                </p>
-              </div>
+    if (activity.id === "daily-tap") {
+      setMessage(
+        "Daily Tap will be connected to the TapBumber earning system next."
+      );
 
-              <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
-                {activities.length}
-              </span>
+      return;
+    }
+
+    if (activity.id === "daily-check") {
+      completeDailyCheckIn();
+
+      return;
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+        <p className="text-sm text-yellow-300">
+          EARNING
+        </p>
+
+        <h2 className="mt-1 text-2xl font-black">
+          Earn on TapBumber
+        </h2>
+
+        <p className="mt-2 text-sm leading-6 text-slate-300">
+          Complete available activities and
+          participate in TapBumber to earn.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-black">
+                Daily Activities
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Available activities for today
+              </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() =>
-                setShowActivities(
-                  !showActivities
-                )
-              }
-              className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
-            >
-              {showActivities
-                ? "HIDE ACTIVITIES"
-                : "VIEW ACTIVITIES"}
-            </button>
+            <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
+              {activities.length}
+            </span>
           </div>
-        </div>
 
-        {showActivities && (
-          <div className="space-y-3">
-            {activities.map((activity) => (
+          <button
+            type="button"
+            onClick={() =>
+              setShowActivities(
+                !showActivities
+              )
+            }
+            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+          >
+            {showActivities
+              ? "HIDE ACTIVITIES"
+              : "VIEW ACTIVITIES"}
+          </button>
+        </div>
+      </div>
+
+      {showActivities && (
+        <div className="space-y-3">
+          {activities.map((activity) => {
+            const checkedIn =
+              activity.id ===
+                "daily-check" &&
+              hasCheckedInToday();
+
+            return (
               <div
                 key={activity.id}
                 className="rounded-3xl border border-white/10 bg-black/55 p-4 backdrop-blur-xl"
@@ -701,31 +760,36 @@ export default function Home() {
                       </div>
 
                       <span className="shrink-0 text-xs font-black text-yellow-400">
-                        {activity.reward}
+                        {checkedIn
+                          ? "DONE"
+                          : activity.reward}
                       </span>
                     </div>
 
                     <button
                       type="button"
                       onClick={() =>
-                        openActivity(activity)
+                        openActivity(
+                          activity
+                        )
                       }
-                      className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95"
+                      disabled={checkedIn}
+                      className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      OPEN ACTIVITY
+                      {checkedIn
+                        ? "CHECKED IN ✅"
+                        : "OPEN ACTIVITY"}
                     </button>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  /*
-   * ---------------------------------------------------------
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+} ---------------------------------------------------------
    * GAMES
    * ---------------------------------------------------------
    */
