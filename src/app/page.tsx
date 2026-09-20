@@ -20,7 +20,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const [activeTab, setActiveTab] = useState<DashboardTab>("home");
+  const [activeTab, setActiveTab] =
+    useState<DashboardTab>("home");
+
   const [copied, setCopied] = useState(false);
 
   /*
@@ -34,7 +36,8 @@ export default function Home() {
 
     async function loadSession() {
       try {
-        const { data, error } = await supabase.auth.getSession();
+        const { data, error } =
+          await supabase.auth.getSession();
 
         if (!mounted) return;
 
@@ -45,7 +48,11 @@ export default function Home() {
           setUser(data.session?.user ?? null);
         }
       } catch (error) {
-        console.error("Unable to load session:", error);
+        console.error(
+          "Unable to load session:",
+          error
+        );
+
         if (mounted) {
           setUser(null);
         }
@@ -60,22 +67,27 @@ export default function Home() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("Supabase auth event:", event);
+    } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        console.log(
+          "Supabase auth event:",
+          event
+        );
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      setUser(session?.user ?? null);
+        setUser(session?.user ?? null);
 
-      if (event === "SIGNED_IN") {
-        setActiveTab("home");
-        setMessage("");
+        if (event === "SIGNED_IN") {
+          setActiveTab("home");
+          setMessage("");
+        }
+
+        if (event === "SIGNED_OUT") {
+          setActiveTab("home");
+        }
       }
-
-      if (event === "SIGNED_OUT") {
-        setActiveTab("home");
-      }
-    });
+    );
 
     return () => {
       mounted = false;
@@ -89,30 +101,50 @@ export default function Home() {
    * ---------------------------------------------------------
    */
 
-  async function handleAuth(e: FormEvent<HTMLFormElement>) {
+  async function handleAuth(
+    e: FormEvent<HTMLFormElement>
+  ) {
     e.preventDefault();
 
     setMessage("");
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail =
+      email.trim().toLowerCase();
 
     if (!cleanEmail) {
-      setMessage("Please enter your email address.");
+      setMessage(
+        "Please enter your email address."
+      );
       return;
     }
 
-    if (authMode !== "reset" && !password) {
-      setMessage("Please enter your password.");
+    if (
+      authMode !== "reset" &&
+      !password
+    ) {
+      setMessage(
+        "Please enter your password."
+      );
       return;
     }
 
-    if (authMode !== "reset" && password.length < 6) {
-      setMessage("Password must be at least 6 characters.");
+    if (
+      authMode !== "reset" &&
+      password.length < 6
+    ) {
+      setMessage(
+        "Password must be at least 6 characters."
+      );
       return;
     }
 
-    if (authMode === "signup" && password !== confirmPassword) {
-      setMessage("Passwords do not match.");
+    if (
+      authMode === "signup" &&
+      password !== confirmPassword
+    ) {
+      setMessage(
+        "Passwords do not match."
+      );
       return;
     }
 
@@ -120,8 +152,11 @@ export default function Home() {
 
     try {
       /*
+       * -----------------------------------------------------
        * SIGN UP
+       * -----------------------------------------------------
        */
+
       if (authMode === "signup") {
         const {
           data,
@@ -137,92 +172,150 @@ export default function Home() {
         }
 
         /*
-         * Save referral code locally for the next stage.
-         * We are NOT changing the database/referral system yet.
+         * Keep referral code locally for now.
+         * Referral database logic will be connected later.
          */
+
         if (referralCode.trim()) {
           localStorage.setItem(
             "tapbumber_pending_referral",
-            referralCode.trim().toUpperCase()
+            referralCode
+              .trim()
+              .toUpperCase()
           );
         }
 
         /*
-         * If Supabase immediately gives us a session,
-         * the user is already logged in.
+         * If Supabase immediately gives
+         * the new user a session, go directly
+         * to the dashboard.
          */
-        if (data.session && data.user) {
-          setUser(data.user);
+
+        if (data.session?.user) {
+          setUser(data.session.user);
           setActiveTab("home");
 
           setPassword("");
           setConfirmPassword("");
           setReferralCode("");
-          setMessage("");
+
+          setMessage(
+            "Account created successfully! 🎉"
+          );
 
           return;
         }
 
         /*
-         * If email confirmation is enabled in Supabase,
-         * there will be no session yet.
+         * Email confirmation is required.
          */
+
         setPassword("");
         setConfirmPassword("");
+        setAuthMode("login");
 
         setMessage(
-          "Account created successfully. Please check your email to confirm your account, then log in."
+          "Account created successfully. Please confirm your email, then login."
         );
-
-        setAuthMode("login");
 
         return;
       }
 
       /*
+       * -----------------------------------------------------
        * LOGIN
+       * -----------------------------------------------------
        */
+
       if (authMode === "login") {
         const {
           data,
           error,
-        } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
+        } =
+          await supabase.auth.signInWithPassword(
+            {
+              email: cleanEmail,
+              password,
+            }
+          );
 
         if (error) {
           setMessage(error.message);
           return;
         }
 
-        if (!data.user) {
-          setMessage("Login was not completed. Please try again.");
+        /*
+         * Explicitly retrieve the current
+         * Supabase session.
+         */
+
+        const {
+          data: sessionData,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession();
+
+        if (sessionError) {
+          console.error(
+            "Session retrieval error:",
+            sessionError
+          );
+
+          setMessage(
+            "Login succeeded, but we could not load your session. Please try again."
+          );
+
           return;
         }
 
-        setUser(data.user);
+        const loggedInUser =
+          sessionData.session?.user ??
+          data.user;
+
+        if (!loggedInUser) {
+          setMessage(
+            "Login succeeded, but your account session was not found."
+          );
+
+          return;
+        }
+
+        /*
+         * Successful login:
+         * immediately show the dashboard.
+         */
+
+        setUser(loggedInUser);
         setActiveTab("home");
 
         setPassword("");
         setConfirmPassword("");
-        setMessage("");
+
+        setMessage(
+          "Login successful! 🎉"
+        );
 
         return;
       }
 
       /*
+       * -----------------------------------------------------
        * PASSWORD RESET
+       * -----------------------------------------------------
        */
+
       const redirectTo =
         typeof window !== "undefined"
           ? `${window.location.origin}/`
           : undefined;
 
       const { error } =
-        await supabase.auth.resetPasswordForEmail(cleanEmail, {
-          redirectTo,
-        });
+        await supabase.auth.resetPasswordForEmail(
+          cleanEmail,
+          {
+            redirectTo,
+          }
+        );
 
       if (error) {
         setMessage(error.message);
@@ -233,8 +326,14 @@ export default function Home() {
         "Password reset instructions have been sent to your email."
       );
     } catch (error) {
-      console.error("Authentication error:", error);
-      setMessage("Something went wrong. Please try again.");
+      console.error(
+        "Authentication error:",
+        error
+      );
+
+      setMessage(
+        "Something went wrong. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -253,10 +352,15 @@ export default function Home() {
     setMessage("");
 
     try {
-      const { error } = await supabase.auth.signOut();
+      const { error } =
+        await supabase.auth.signOut();
 
       if (error) {
-        console.error("Logout error:", error);
+        console.error(
+          "Logout error:",
+          error
+        );
+
         setMessage(error.message);
         return;
       }
@@ -272,9 +376,6 @@ export default function Home() {
       setCopied(false);
       setAuthMode("login");
 
-      /*
-       * Make sure the browser returns to the login state.
-       */
       if (typeof window !== "undefined") {
         window.scrollTo({
           top: 0,
@@ -282,8 +383,14 @@ export default function Home() {
         });
       }
     } catch (error) {
-      console.error("Logout failed:", error);
-      setMessage("Unable to sign out. Please try again.");
+      console.error(
+        "Logout failed:",
+        error
+      );
+
+      setMessage(
+        "Unable to sign out. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -300,12 +407,17 @@ export default function Home() {
 
     const code =
       referralCode.trim() ||
-      user.id.slice(0, 8).toUpperCase();
+      user.id
+        .slice(0, 8)
+        .toUpperCase();
 
-    const link = `${window.location.origin}/?ref=${code}`;
+    const link =
+      `${window.location.origin}/?ref=${code}`;
 
     try {
-      await navigator.clipboard.writeText(link);
+      await navigator.clipboard.writeText(
+        link
+      );
 
       setCopied(true);
 
@@ -313,7 +425,9 @@ export default function Home() {
         setCopied(false);
       }, 2000);
     } catch {
-      setMessage("Unable to copy the referral link.");
+      setMessage(
+        "Unable to copy the referral link."
+      );
     }
   }
 
@@ -376,10 +490,14 @@ export default function Home() {
           <div className="mt-4 grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => setActiveTab("earn")}
+              onClick={() =>
+                setActiveTab("earn")
+              }
               className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
             >
-              <span className="text-2xl">🎯</span>
+              <span className="text-2xl">
+                🎯
+              </span>
 
               <span className="mt-2 block font-black">
                 Earn
@@ -392,10 +510,14 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => setActiveTab("games")}
+              onClick={() =>
+                setActiveTab("games")
+              }
               className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
             >
-              <span className="text-2xl">🎮</span>
+              <span className="text-2xl">
+                🎮
+              </span>
 
               <span className="mt-2 block font-black">
                 Games
@@ -408,10 +530,14 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => setActiveTab("refer")}
+              onClick={() =>
+                setActiveTab("refer")
+              }
               className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
             >
-              <span className="text-2xl">👥</span>
+              <span className="text-2xl">
+                👥
+              </span>
 
               <span className="mt-2 block font-black">
                 Refer
@@ -424,10 +550,14 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => setActiveTab("wallet")}
+              onClick={() =>
+                setActiveTab("wallet")
+              }
               className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition active:scale-95"
             >
-              <span className="text-2xl">💰</span>
+              <span className="text-2xl">
+                💰
+              </span>
 
               <span className="mt-2 block font-black">
                 Wallet
@@ -461,9 +591,9 @@ export default function Home() {
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-slate-300">
-          Your earning activities will appear here.
-          Each activity can be opened and completed
-          from this section.
+          Your earning activities will appear
+          here. Each activity can be opened and
+          completed from this section.
         </p>
 
         <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
@@ -472,7 +602,8 @@ export default function Home() {
           </p>
 
           <p className="mt-1 text-xs text-slate-400">
-            Activities will be connected to your account next.
+            Activities will be connected to
+            your account next.
           </p>
 
           <button
@@ -509,7 +640,8 @@ export default function Home() {
         </h2>
 
         <p className="mt-2 text-sm text-slate-400">
-          Games will be connected and tested in the next step.
+          Games will be connected and tested
+          in the next step.
         </p>
 
         <div className="mt-5 space-y-3">
@@ -522,7 +654,9 @@ export default function Home() {
               type="button"
               key={name}
               onClick={() =>
-                setMessage(`${name} will open here.`)
+                setMessage(
+                  `${name} will open here.`
+                )
               }
               className="flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-left active:scale-[0.98]"
             >
@@ -554,7 +688,9 @@ export default function Home() {
 
   function renderRefer() {
     const code =
-      user?.id.slice(0, 8).toUpperCase() ||
+      user?.id
+        .slice(0, 8)
+        .toUpperCase() ||
       "TAPUSER";
 
     const link =
@@ -573,8 +709,9 @@ export default function Home() {
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-slate-300">
-          Share your referral link with people you
-          genuinely want to invite to TapBumber.
+          Share your referral link with people
+          you genuinely want to invite to
+          TapBumber.
         </p>
 
         <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -718,7 +855,9 @@ export default function Home() {
                 disabled={loading}
                 className="rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-xs font-black transition active:scale-95 disabled:opacity-50"
               >
-                {loading ? "..." : "LOGOUT"}
+                {loading
+                  ? "..."
+                  : "LOGOUT"}
               </button>
             </header>
 
@@ -745,7 +884,9 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() => setMessage("")}
+                  onClick={() =>
+                    setMessage("")
+                  }
                   className="ml-3 font-black text-yellow-400"
                 >
                   ✕
@@ -761,30 +902,32 @@ export default function Home() {
                   ["games", "🎮", "Games"],
                   ["refer", "👥", "Refer"],
                   ["wallet", "💰", "Wallet"],
-                ].map(([tab, icon, label]) => (
-                  <button
-                    type="button"
-                    key={tab}
-                    onClick={() =>
-                      setActiveTab(
-                        tab as DashboardTab
-                      )
-                    }
-                    className={`rounded-2xl px-1 py-2 text-center transition active:scale-95 ${
-                      activeTab === tab
-                        ? "bg-yellow-400 text-black"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    <span className="block text-lg">
-                      {icon}
-                    </span>
+                ].map(
+                  ([tab, icon, label]) => (
+                    <button
+                      type="button"
+                      key={tab}
+                      onClick={() =>
+                        setActiveTab(
+                          tab as DashboardTab
+                        )
+                      }
+                      className={`rounded-2xl px-1 py-2 text-center transition active:scale-95 ${
+                        activeTab === tab
+                          ? "bg-yellow-400 text-black"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      <span className="block text-lg">
+                        {icon}
+                      </span>
 
-                    <span className="mt-1 block text-[10px] font-black">
-                      {label}
-                    </span>
-                  </button>
-                ))}
+                      <span className="mt-1 block text-[10px] font-black">
+                        {label}
+                      </span>
+                    </button>
+                  )
+                )}
               </div>
             </nav>
           </div>
@@ -818,6 +961,18 @@ export default function Home() {
         </div>
       </main>
     );
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * IMPORTANT:
+   * If a user is logged in, show the dashboard.
+   * Otherwise show login/signup/reset.
+   * ---------------------------------------------------------
+   */
+
+  if (user) {
+    return renderDashboard();
   }
 
   /*
@@ -883,7 +1038,9 @@ export default function Home() {
                   type="email"
                   value={email}
                   onChange={(e) =>
-                    setEmail(e.target.value)
+                    setEmail(
+                      e.target.value
+                    )
                   }
                   placeholder="Enter your email"
                   autoComplete="email"
@@ -907,7 +1064,9 @@ export default function Home() {
                       }
                       value={password}
                       onChange={(e) =>
-                        setPassword(e.target.value)
+                        setPassword(
+                          e.target.value
+                        )
                       }
                       placeholder="Enter your password"
                       autoComplete={
@@ -950,7 +1109,9 @@ export default function Home() {
                           ? "text"
                           : "password"
                       }
-                      value={confirmPassword}
+                      value={
+                        confirmPassword
+                      }
                       onChange={(e) =>
                         setConfirmPassword(
                           e.target.value
@@ -973,7 +1134,9 @@ export default function Home() {
 
                     <input
                       type="text"
-                      value={referralCode}
+                      value={
+                        referralCode
+                      }
                       onChange={(e) =>
                         setReferralCode(
                           e.target.value.toUpperCase()
