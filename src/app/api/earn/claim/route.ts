@@ -70,39 +70,266 @@ function getPackageDetails(packageName: string) {
   return null;
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const authorization = request.headers.get("authorization");
+async function authenticate(request: NextRequest) {
+  const authorization = request.headers.get("authorization");
 
-    if (!authorization?.startsWith("Bearer ")) {
-      return NextResponse.json(
+  if (!authorization?.startsWith("Bearer ")) {
+    return {
+      user: null,
+      error: NextResponse.json(
         { error: "Missing authorization token." },
         { status: 401 }
-      );
-    }
+      ),
+    };
+  }
 
-    const token = authorization.replace("Bearer ", "").trim();
+  const token = authorization.replace("Bearer ", "").trim();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(token);
+  const {
+    data: { user },
+    error: authError,
+  } = await supabaseAdmin.auth.getUser(token);
 
-    if (authError || !user) {
-      return NextResponse.json(
+  if (authError || !user) {
+    return {
+      user: null,
+      error: NextResponse.json(
         { error: "Invalid or expired session." },
         { status: 401 }
+      ),
+    };
+  }
+
+  return {
+    user,
+    error: null,
+  };
+}
+
+async function getProfile(userId: string) {
+  const { data: profile, error: profileError } =
+    await supabaseAdmin
+      .from("user_profiles")
+      .select(
+        "id, is_activated, package, balance, total_earned"
+      )
+      .eq("id", userId)
+      .single();
+
+  return {
+    profile,
+    profileError,
+  };
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { user, error: authResponse } =
+      await authenticate(request);
+
+    if (authResponse || !user) {
+      return authResponse;
+    }
+
+    const { profile, profileError } =
+      await getProfile(user.id);
+
+    if (profileError || !profile) {
+      return NextResponse.json(
+        { error: "User profile not found." },
+        { status: 404 }
       );
     }
 
-    const { data: profile, error: profileError } =
+    const balance = Number(profile.balance || 0);
+    const totalEarned = Number(
+      profile.total_earned || 0
+    );
+
+    if (!profile.is_activated) {
+      return NextResponse.json({
+        success: true,
+        status: "inactive",
+        package: null,
+        amount: 0,
+        dailyMaximum: 0,
+        balance,
+        totalEarned,
+        completedCycles: 0,
+        maxCycles: MAX_CYCLES,
+        cycleIndex: 0,
+        periodStart: null,
+        cycleStartMs: null,
+        cycleEndMs: null,
+        claimDeadlineMs: null,
+        nowMs: Date.now(),
+        canClaim: false,
+      });
+    }
+
+    const packageName = String(
+      profile.package || ""
+    ).toLowerCase();
+
+    const packageDetails =
+      getPackageDetails(packageName);
+
+    if (!packageDetails) {
+      return NextResponse.json(
+        {
+          error:
+            "Your account does not have a valid TapBumber package.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const now = Date.now();
+
+    const periodStart =
+      getEarningPeriodStart(new Date(now));
+
+    const { data: claims, error: claimsError } =
       await supabaseAdmin
-        .from("user_profiles")
+        .from("cycle_claims")
         .select(
-          "id, is_activated, package, balance, total_earned"
+          "id, cycle_index, amount, claimed_at_ms"
         )
-        .eq("id", user.id)
-        .single();
+        .eq("user_id", user.id)
+        .eq(
+          "daily_period_start_ms",
+          periodStart
+        )
+        .order("cycle_index", {
+          ascending: true,
+        });
+
+    if (claimsError) {
+      console.error(
+        "Cycle claims GET error:",
+        claimsError
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Unable to check your earning cycles.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const existingClaims = claims || [];
+
+    const completedCycles =
+      existingClaims.length;
+
+    if (completedCycles >= MAX_CYCLES) {
+      return NextResponse.json({
+        success: true,
+        status: "complete",
+        package: packageName,
+        amount: packageDetails.amount,
+        dailyMaximum:
+          packageDetails.dailyMaximum,
+        balance,
+        totalEarned,
+        completedCycles: MAX_CYCLES,
+        maxCycles: MAX_CYCLES,
+        cycleIndex: MAX_CYCLES,
+        periodStart,
+        cycleStartMs: null,
+        cycleEndMs: null,
+        claimDeadlineMs: null,
+        nowMs: now,
+        canClaim: false,
+      });
+    }
+
+    const nextCycleIndex =
+      completedCycles + 1;
+
+    let cycleStartMs = periodStart;
+
+    if (existingClaims.length > 0) {
+      const lastClaim =
+        existingClaims[
+          existingClaims.length - 1
+        ];
+
+      cycleStartMs =
+        Number(lastClaim.claimed_at_ms) +
+        CYCLE_DURATION_MS;
+    }
+
+    const cycleEndMs =
+      cycleStartMs + CYCLE_DURATION_MS;
+
+    const claimDeadlineMs =
+      cycleEndMs + CLAIM_WINDOW_MS;
+
+    let status:
+      | "earning"
+      | "claim"
+      | "expired";
+
+    let canClaim = false;
+
+    if (now < cycleEndMs) {
+      status = "earning";
+    } else if (now <= claimDeadlineMs) {
+      status = "claim";
+      canClaim = true;
+    } else {
+      status = "expired";
+    }
+
+    return NextResponse.json({
+      success: true,
+      status,
+      package: packageName,
+      amount: packageDetails.amount,
+      dailyMaximum:
+        packageDetails.dailyMaximum,
+      balance,
+      totalEarned,
+      completedCycles,
+      maxCycles: MAX_CYCLES,
+      cycleIndex: nextCycleIndex,
+      periodStart,
+      cycleStartMs,
+      cycleEndMs,
+      claimDeadlineMs,
+      nowMs: now,
+      canClaim,
+    });
+  } catch (error) {
+    console.error(
+      "Daily Tap GET error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Unable to load Daily Tap right now.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { user, error: authResponse } =
+      await authenticate(request);
+
+    if (authResponse || !user) {
+      return authResponse;
+    }
+
+    const { profile, profileError } =
+      await getProfile(user.id);
 
     if (profileError || !profile) {
       return NextResponse.json(
@@ -140,9 +367,8 @@ export async function POST(request: NextRequest) {
 
     const now = Date.now();
 
-    const periodStart = getEarningPeriodStart(
-      new Date(now)
-    );
+    const periodStart =
+      getEarningPeriodStart(new Date(now));
 
     const { data: claims, error: claimsError } =
       await supabaseAdmin
@@ -245,7 +471,6 @@ export async function POST(request: NextRequest) {
     }
 
     const amount = packageDetails.amount;
-
     const dailyMaximum =
       packageDetails.dailyMaximum;
 
