@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
 type AuthMode = "signup" | "login" | "reset";
+
 type DashboardTab =
   | "home"
   | "earn"
@@ -237,7 +238,11 @@ export default function Home() {
   }
 
   /*
-   * Load Daily Tap whenever user enters Earn.
+   * Load earning state on BOTH Home and Earn.
+   *
+   * This is important because the Home page needs to know
+   * whether the account is activated so it can show the
+   * Activate Account button.
    */
 
   useEffect(() => {
@@ -246,7 +251,10 @@ export default function Home() {
       return;
     }
 
-    if (activeTab === "earn") {
+    if (
+      activeTab === "home" ||
+      activeTab === "earn"
+    ) {
       loadEarnState();
     }
   }, [user, activeTab]);
@@ -255,9 +263,6 @@ export default function Home() {
    * ---------------------------------------------------------
    * LIVE COUNTDOWN
    * ---------------------------------------------------------
-   *
-   * This only updates the visible clock.
-   * The server remains the source of truth.
    */
 
   useEffect(() => {
@@ -298,15 +303,6 @@ export default function Home() {
    * ---------------------------------------------------------
    * AUTOMATIC CYCLE BOUNDARY REFRESH
    * ---------------------------------------------------------
-   *
-   * Instead of calling the server every second, we schedule
-   * one refresh when the current important boundary arrives.
-   *
-   * EARNING:
-   *     2 hours -> refresh -> CLAIM
-   *
-   * CLAIM:
-   *     20 minutes -> refresh -> next server state
    */
 
   useEffect(() => {
@@ -903,6 +899,62 @@ export default function Home() {
           </div>
         </div>
 
+        {/* -------------------------------------------------
+            ACCOUNT ACTIVATION
+            This is NOT a daily activity.
+            It is a separate account action.
+           ------------------------------------------------- */}
+
+        {earnState &&
+          !earnState.isActivated && (
+            <div className="mt-4 rounded-3xl border border-yellow-400/30 bg-yellow-400/10 p-5 shadow-xl backdrop-blur-xl">
+              <p className="text-sm font-black text-yellow-300">
+                🔐 ACCOUNT ACTIVATION
+              </p>
+
+              <h3 className="mt-1 text-xl font-black">
+                Activate your TapBumber account
+              </h3>
+
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Choose your package, see the activation price and submit your payment details.
+              </p>
+
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs text-slate-400">
+                    Standard
+                  </p>
+
+                  <p className="mt-1 text-lg font-black text-yellow-400">
+                    ₦3,000
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs text-slate-400">
+                    Premium
+                  </p>
+
+                  <p className="mt-1 text-lg font-black text-yellow-400">
+                    ₦5,000
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href =
+                    "/activate";
+                }}
+                className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-4 font-black text-black shadow-lg transition active:scale-[0.98]"
+              >
+                ACTIVATE ACCOUNT 🔐
+              </button>
+            </div>
+          )}
+
         <div className="mt-4 rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
           <h3 className="text-lg font-black">
             Quick Actions
@@ -1042,6 +1094,17 @@ export default function Home() {
           <p className="mt-1 text-xs leading-5 text-orange-100/70">
             Activate your TapBumber account before starting Daily Tap.
           </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href =
+                "/activate";
+            }}
+            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black transition active:scale-[0.98]"
+          >
+            ACTIVATE ACCOUNT 🔐
+          </button>
         </div>
       );
     }
