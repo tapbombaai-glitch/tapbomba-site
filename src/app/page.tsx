@@ -1309,66 +1309,55 @@ export default function Home() {
     return null;
   }
 
-  /*
+    /*
    * ---------------------------------------------------------
    * EARN
    * ---------------------------------------------------------
    */
 
   function renderEarn() {
-    const activities: Activity[] =
-      [
-        {
-          id: "daily-tap",
-          icon: "👆",
-          title: "Daily Tap",
-          description:
-            "Complete your 2-hour earning cycle and claim your reward.",
-          reward:
-            earnState?.amount
-              ? `₦${earnState.amount}`
-              : "ACTIVITY",
-        },
-        {
-          id: "daily-check",
-          icon: "✅",
-          title: "Daily Check-In",
-          description:
-            "Check in once each day.",
-          reward: "DAILY",
-        },
-        {
-          id: "community",
-          icon: "💬",
-          title: "Community Activity",
-          description:
-            "Visit the TapBumber community.",
-          reward: "COMMUNITY",
-        },
-      ];
+    const activities: Activity[] = [
+      {
+        id: "daily-tap",
+        icon: "👆",
+        title: "Daily Tap",
+        description:
+          "Complete your 2-hour earning cycle and claim your reward.",
+        reward:
+          earnState?.amount
+            ? `₦${earnState.amount}`
+            : "ACTIVITY",
+      },
+      {
+        id: "daily-check",
+        icon: "✅",
+        title: "Daily Check-In",
+        description:
+          "Check in once each day.",
+        reward: "DAILY",
+      },
+      {
+        id: "community",
+        icon: "💬",
+        title: "Community Activity",
+        description:
+          "Visit the TapBumber community.",
+        reward: "COMMUNITY",
+      },
+    ];
 
     function getTodayKey() {
-      const now =
-        new Date();
+      const now = new Date();
 
-      const year =
-        now.getFullYear();
+      const year = now.getFullYear();
 
-      const month =
-        String(
-          now.getMonth() + 1
-        ).padStart(
-          2,
-          "0"
-        );
+      const month = String(
+        now.getMonth() + 1
+      ).padStart(2, "0");
 
-      const day =
-        String(
-          now.getDate()
-        ).padStart(
-          2,
-          "0"
-        );
+      const day = String(
+        now.getDate()
+      ).padStart(2, "0");
 
       return `${year}-${month}-${day}`;
     }
@@ -1383,10 +1372,7 @@ export default function Home() {
           `tapbumber_daily_checkin_${user.id}`
         );
 
-      return (
-        saved ===
-        getTodayKey()
-      );
+      return saved === getTodayKey();
     }
 
     function completeDailyCheckIn() {
@@ -1394,8 +1380,7 @@ export default function Home() {
         return;
       }
 
-      const today =
-        getTodayKey();
+      const today = getTodayKey();
 
       const saved =
         localStorage.getItem(
@@ -1483,9 +1468,7 @@ export default function Home() {
               </div>
 
               <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
-                {
-                  activities.length
-                }
+                {activities.length}
               </span>
             </div>
 
@@ -1554,19 +1537,83 @@ export default function Home() {
                         {activity.id ===
                         "daily-tap" ? (
                           <>
-                            {
-                              renderDailyTapCard()
-                            }
+                            {earnState?.isActivated ===
+                              false ||
+                            earnState?.status ===
+                              "inactive" ? (
+                              <div className="mt-4 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+                                <div className="text-center">
+                                  <div className="text-3xl">
+                                    🔐
+                                  </div>
 
-                            <button
-                              type="button"
-                              onClick={
-                                loadEarnState
-                              }
-                              className="mt-3 text-xs font-bold text-slate-500 underline"
-                            >
-                              REFRESH CYCLE
-                            </button>
+                                  <h4 className="mt-2 font-black text-yellow-300">
+                                    Account Not Activated
+                                  </h4>
+
+                                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                                    Activate your TapBumber account to start earning.
+                                  </p>
+                                </div>
+
+                                <div className="mt-4 grid grid-cols-2 gap-3">
+                                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-center">
+                                    <p className="text-xs text-slate-400">
+                                      Standard
+                                    </p>
+
+                                    <p className="mt-1 text-lg font-black text-white">
+                                      ₦3,000
+                                    </p>
+
+                                    <p className="mt-1 text-xs text-yellow-300">
+                                      ₦50 / cycle
+                                    </p>
+                                  </div>
+
+                                  <div className="rounded-2xl border border-white/10 bg-black/30 p-3 text-center">
+                                    <p className="text-xs text-slate-400">
+                                      Premium
+                                    </p>
+
+                                    <p className="mt-1 text-lg font-black text-white">
+                                      ₦5,000
+                                    </p>
+
+                                    <p className="mt-1 text-xs text-yellow-300">
+                                      ₦120 / cycle
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    window.location.href =
+                                      "/activate";
+                                  }}
+                                  className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+                                >
+                                  🔐 ACTIVATE ACCOUNT
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                {
+                                  renderDailyTapCard()
+                                }
+
+                                <button
+                                  type="button"
+                                  onClick={
+                                    loadEarnState
+                                  }
+                                  className="mt-3 text-xs font-bold text-slate-500 underline"
+                                >
+                                  REFRESH CYCLE
+                                </button>
+                              </>
+                            )}
                           </>
                         ) : (
                           <button
@@ -1599,7 +1646,7 @@ export default function Home() {
   }
 
   /*
-   * ---------------------------------------------------------
+   * -----------------------------------------
    * GAMES
    * ---------------------------------------------------------
    */
