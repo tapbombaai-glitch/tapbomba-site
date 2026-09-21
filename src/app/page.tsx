@@ -783,7 +783,7 @@ function renderEarn() {
                   </div>
                 </div>
               </div>
-                        );
+             );
           })}
         </div>
       )}
