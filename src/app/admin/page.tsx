@@ -61,21 +61,38 @@ export default function AdminPage() {
   }
 
   async function loadRequests() {
-    const { data, error } = await supabase
-      .from("activation_requests")
-      .select(
-        "id, user_id, message, status, payment_reference, payment_note, admin_reply, created_at"
-      )
-      .in("status", ["pending", "submitted", "under_review"])
-      .order("created_at", { ascending: false });
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    if (error) {
-      console.error(error);
-      setMessage(error.message);
-      return;
+      if (!session) {
+        setMessage("Admin session expired. Please log in again.");
+        return;
+      }
+
+      const response = await fetch("/api/admin/activation", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error("Admin request error:", result);
+        setMessage(
+          result.error || "Unable to load activation requests."
+        );
+        return;
+      }
+
+      setRequests(result.requests || []);
+    } catch (error) {
+      console.error("Load requests error:", error);
+      setMessage("Unable to load activation requests.");
     }
-
-    setRequests(data || []);
   }
 
   function detectPackage(request: ActivationRequest) {
@@ -140,6 +157,7 @@ export default function AdminPage() {
       }
 
       setMessage("Activation approved successfully. ✅");
+
       await loadRequests();
     } catch (error) {
       console.error(error);
@@ -230,7 +248,9 @@ export default function AdminPage() {
 
                   <div className="mt-4 space-y-2 text-sm">
                     <p>
-                      <span className="text-gray-400">User ID:</span>{" "}
+                      <span className="text-gray-400">
+                        User ID:
+                      </span>{" "}
                       <span className="break-all text-gray-200">
                         {request.user_id}
                       </span>
@@ -241,7 +261,8 @@ export default function AdminPage() {
                         Payment Reference:
                       </span>{" "}
                       <span className="text-white">
-                        {request.payment_reference || "Not provided"}
+                        {request.payment_reference ||
+                          "Not provided"}
                       </span>
                     </p>
 
@@ -271,13 +292,18 @@ export default function AdminPage() {
                   </div>
 
                   <div className="mt-4 rounded-xl bg-black/40 p-3 text-sm text-gray-300">
-                    {request.message || "No message provided."}
+                    {request.message ||
+                      "No message provided."}
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => approveRequest(request)}
-                    disabled={processingId === request.id}
+                    onClick={() =>
+                      approveRequest(request)
+                    }
+                    disabled={
+                      processingId === request.id
+                    }
                     className="mt-5 w-full rounded-xl bg-yellow-400 px-4 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {processingId === request.id
