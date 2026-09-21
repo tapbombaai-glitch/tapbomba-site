@@ -27,7 +27,6 @@ function getEarningPeriodStart(date = new Date()) {
   });
 
   const parts = formatter.formatToParts(date);
-
   const values: Record<string, string> = {};
 
   for (const part of parts) {
@@ -142,13 +141,13 @@ export async function GET(request: NextRequest) {
     }
 
     const balance = Number(profile.balance || 0);
-    const totalEarned = Number(
-      profile.total_earned || 0
-    );
+    const totalEarned = Number(profile.total_earned || 0);
 
+    // Account is not activated yet.
     if (!profile.is_activated) {
       return NextResponse.json({
         success: true,
+        isActivated: false,
         status: "inactive",
         package: null,
         amount: 0,
@@ -220,13 +219,13 @@ export async function GET(request: NextRequest) {
     }
 
     const existingClaims = claims || [];
+    const completedCycles = existingClaims.length;
 
-    const completedCycles =
-      existingClaims.length;
-
+    // All 12 cycles completed.
     if (completedCycles >= MAX_CYCLES) {
       return NextResponse.json({
         success: true,
+        isActivated: true,
         status: "complete",
         package: packageName,
         amount: packageDetails.amount,
@@ -286,6 +285,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      isActivated: true,
       status,
       package: packageName,
       amount: packageDetails.amount,
@@ -436,6 +436,7 @@ export async function POST(request: NextRequest) {
     const claimDeadlineMs =
       cycleEndMs + CLAIM_WINDOW_MS;
 
+    // The 2-hour earning cycle is still running.
     if (now < cycleEndMs) {
       const remainingMs =
         cycleEndMs - now;
@@ -455,6 +456,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // The 20-minute claim window has expired.
     if (now > claimDeadlineMs) {
       return NextResponse.json(
         {
