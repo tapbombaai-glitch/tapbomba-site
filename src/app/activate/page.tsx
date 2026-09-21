@@ -1,0 +1,483 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+type PackageType = "standard" | "premium";
+
+const PACKAGES = {
+  standard: {
+    name: "STANDARD",
+    fee: 3000,
+    cycle: 50,
+    daily: 600,
+  },
+  premium: {
+    name: "PREMIUM",
+    fee: 5000,
+    cycle: 120,
+    daily: 1440,
+  },
+};
+
+export default function ActivatePage() {
+  const [packageType, setPackageType] =
+    useState<PackageType>("standard");
+
+  const [paymentReference, setPaymentReference] =
+    useState("");
+
+  const [paymentNote, setPaymentNote] =
+    useState("");
+
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] =
+    useState(false);
+
+  const [userEmail, setUserEmail] =
+    useState("");
+
+  const [message, setMessage] = useState("");
+
+  const selectedPackage =
+    PACKAGES[packageType];
+
+  useEffect(() => {
+    async function loadUser() {
+      setLoading(true);
+
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+
+        if (error) {
+          console.error(
+            "Unable to load user:",
+            error
+          );
+
+          setMessage(
+            "Unable to verify your account. Please login again."
+          );
+
+          return;
+        }
+
+        if (!user) {
+          setMessage(
+            "Please login before requesting activation."
+          );
+
+          return;
+        }
+
+        setUserEmail(user.email ?? "");
+
+        const { data: profile, error: profileError } =
+          await supabase
+            .from("user_profiles")
+            .select(
+              "is_activated, package"
+            )
+            .eq("id", user.id)
+            .maybeSingle();
+
+        if (profileError) {
+          console.error(
+            "Profile lookup error:",
+            profileError
+          );
+        }
+
+        if (profile?.is_activated) {
+          setMessage(
+            `Your account is already activated on the ${
+              profile.package
+                ? String(
+                    profile.package
+                  ).toUpperCase()
+                : "SELECTED"
+            } package.`
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Activation page error:",
+          error
+        );
+
+        setMessage(
+          "Something went wrong. Please try again."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadUser();
+  }, []);
+
+  async function submitRequest(
+    e: FormEvent<HTMLFormElement>
+  ) {
+    e.preventDefault();
+
+    setMessage("");
+
+    if (!paymentReference.trim()) {
+      setMessage(
+        "Please enter your payment reference."
+      );
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        setMessage(
+          "Your login session could not be verified. Please login again."
+        );
+
+        return;
+      }
+
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("user_profiles")
+          .select(
+            "is_activated, package"
+          )
+          .eq("id", user.id)
+          .maybeSingle();
+
+      if (profileError) {
+        console.error(
+          "Profile check error:",
+          profileError
+        );
+
+        setMessage(
+          "Unable to check your activation status."
+        );
+
+        return;
+      }
+
+      if (profile?.is_activated) {
+        setMessage(
+          "Your account is already activated."
+        );
+
+        return;
+      }
+
+      const { data: existingRequest, error: requestCheckError } =
+        await supabase
+          .from("activation_requests")
+          .select(
+            "id, status"
+          )
+          .eq("user_id", user.id)
+          .in("status", [
+            "pending",
+            "submitted",
+            "under_review",
+          ])
+          .order("created_at", {
+            ascending: false,
+          })
+          .limit(1)
+          .maybeSingle();
+
+      if (requestCheckError) {
+        console.error(
+          "Request check error:",
+          requestCheckError
+        );
+      }
+
+      if (existingRequest) {
+        setMessage(
+          "You already have an activation request waiting for review."
+        );
+
+        return;
+      }
+
+      const messageText =
+        `Activation request for ${selectedPackage.name} package. ` +
+        `Activation fee: ₦${selectedPackage.fee.toLocaleString()}. ` +
+        `Cycle: ₦${selectedPackage.cycle}. ` +
+        `Maximum daily earning: ₦${selectedPackage.daily.toLocaleString()}.`;
+
+      const { error: insertError } =
+        await supabase
+          .from("activation_requests")
+          .insert({
+            user_id: user.id,
+            message: messageText,
+            status: "pending",
+            payment_reference:
+              paymentReference.trim(),
+            payment_note:
+              paymentNote.trim() || null,
+          });
+
+      if (insertError) {
+        console.error(
+          "Activation request error:",
+          insertError
+        );
+
+        setMessage(
+          insertError.message
+        );
+
+        return;
+      }
+
+      setPaymentReference("");
+      setPaymentNote("");
+
+      setMessage(
+        "Activation request submitted successfully. Please wait for admin approval. ✅"
+      );
+    } catch (error) {
+      console.error(
+        "Activation submission error:",
+        error
+      );
+
+      setMessage(
+        "Something went wrong while submitting your request."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-white/10 border-t-yellow-400" />
+
+          <h1 className="text-2xl font-black">
+            TAP
+            <span className="text-yellow-400">
+              BUMBER
+            </span>
+          </h1>
+
+          <p className="mt-2 text-sm text-slate-400">
+            Checking your account...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#030712] px-4 py-6 text-white">
+      <div className="mx-auto max-w-md">
+        <div className="mb-6 text-center">
+          <h1 className="text-3xl font-black">
+            TAP
+            <span className="text-yellow-400">
+              BUMBER
+            </span>
+          </h1>
+
+          <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-200">
+            Tap • Earn • Grow
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
+          <p className="text-sm font-black text-yellow-300">
+            ACTIVATION
+          </p>
+
+          <h2 className="mt-1 text-2xl font-black">
+            Choose Your Package
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            Select a package and submit your
+            payment reference for admin review.
+          </p>
+
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {(
+              Object.entries(
+                PACKAGES
+              ) as [
+                PackageType,
+                (typeof PACKAGES)[PackageType]
+              ][]
+            ).map(
+              ([key, pkg]) => {
+                const selected =
+                  packageType === key;
+
+                return (
+                  <button
+                    type="button"
+                    key={key}
+                    onClick={() =>
+                      setPackageType(key)
+                    }
+                    className={`rounded-2xl border p-4 text-left transition active:scale-95 ${
+                      selected
+                        ? "border-yellow-400 bg-yellow-400/15"
+                        : "border-white/10 bg-white/5"
+                    }`}
+                  >
+                    <p
+                      className={`text-xs font-black ${
+                        selected
+                          ? "text-yellow-400"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {pkg.name}
+                    </p>
+
+                    <p className="mt-2 text-2xl font-black">
+                      ₦
+                      {pkg.fee.toLocaleString()}
+                    </p>
+
+                    <p className="mt-2 text-xs text-slate-400">
+                      ₦{pkg.cycle} per cycle
+                    </p>
+
+                    <p className="mt-1 text-xs text-slate-400">
+                      Up to ₦
+                      {pkg.daily.toLocaleString()}
+                      /day
+                    </p>
+                  </button>
+                );
+              }
+            )}
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-300">
+                Selected package
+              </span>
+
+              <span className="font-black text-yellow-400">
+                {selectedPackage.name}
+              </span>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between">
+              <span className="text-sm text-slate-300">
+                Activation fee
+              </span>
+
+              <span className="font-black">
+                ₦
+                {selectedPackage.fee.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {userEmail && (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs text-slate-500">
+                Account
+              </p>
+
+              <p className="mt-1 break-all text-sm font-bold">
+                {userEmail}
+              </p>
+            </div>
+          )}
+
+          <form
+            onSubmit={submitRequest}
+            className="mt-5 space-y-4"
+          >
+            <div>
+              <label className="mb-1.5 block text-sm font-bold">
+                Payment Reference
+              </label>
+
+              <input
+                type="text"
+                value={paymentReference}
+                onChange={(e) =>
+                  setPaymentReference(
+                    e.target.value
+                  )
+                }
+                placeholder="Enter your payment reference"
+                disabled={submitting}
+                className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-bold">
+                Payment Note
+                <span className="ml-2 text-xs font-normal text-slate-500">
+                  Optional
+                </span>
+              </label>
+
+              <textarea
+                value={paymentNote}
+                onChange={(e) =>
+                  setPaymentNote(
+                    e.target.value
+                  )
+                }
+                placeholder="Add any payment details for the admin"
+                rows={4}
+                disabled={submitting}
+                className="w-full resize-none rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
+              />
+            </div>
+
+            {message && (
+              <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-3 text-center text-sm leading-5 text-yellow-200">
+                {message}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-5 py-4 font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.18)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting
+                ? "SUBMITTING..."
+                : "SUBMIT ACTIVATION REQUEST 🚀"}
+            </button>
+          </form>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs leading-5 text-slate-400">
+              Your activation is not completed
+              automatically. An admin must review
+              your payment and approve the request
+              before earning is enabled.
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
