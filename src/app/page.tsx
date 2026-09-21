@@ -5,7 +5,12 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
 type AuthMode = "signup" | "login" | "reset";
-type DashboardTab = "home" | "earn" | "games" | "refer" | "wallet";
+type DashboardTab =
+  | "home"
+  | "earn"
+  | "games"
+  | "refer"
+  | "wallet";
 
 type Activity = {
   id: string;
@@ -15,24 +20,75 @@ type Activity = {
   reward: string;
 };
 
+type EarnStatus =
+  | "earning"
+  | "claim"
+  | "expired"
+  | "complete"
+  | "inactive";
+
+type EarnState = {
+  isActivated: boolean;
+  package: string | null;
+  amount: number;
+  dailyMaximum: number;
+  completedCycles: number;
+  maxCycles: number;
+  cycleIndex: number;
+  cycleStartMs: number | null;
+  cycleEndMs: number | null;
+  claimDeadlineMs: number | null;
+  nowMs: number;
+  status: EarnStatus;
+  canClaim: boolean;
+  balance: number;
+  totalEarned: number;
+};
+
 export default function Home() {
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] =
+    useState<AuthMode>("login");
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [referralCode, setReferralCode] = useState("");
+  const [user, setUser] =
+    useState<User | null>(null);
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [email, setEmail] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [confirmPassword, setConfirmPassword] =
+    useState("");
+
+  const [referralCode, setReferralCode] =
+    useState("");
+
+  const [showPassword, setShowPassword] =
+    useState(false);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [message, setMessage] =
+    useState("");
 
   const [activeTab, setActiveTab] =
     useState<DashboardTab>("home");
 
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] =
+    useState(false);
+
   const [showActivities, setShowActivities] =
+    useState(false);
+
+  const [earnState, setEarnState] =
+    useState<EarnState | null>(null);
+
+  const [earnLoading, setEarnLoading] =
+    useState(false);
+
+  const [claimLoading, setClaimLoading] =
     useState(false);
 
   /*
@@ -52,10 +108,16 @@ export default function Home() {
         if (!mounted) return;
 
         if (error) {
-          console.error("Session error:", error);
+          console.error(
+            "Session error:",
+            error
+          );
+
           setUser(null);
         } else {
-          setUser(data.session?.user ?? null);
+          setUser(
+            data.session?.user ?? null
+          );
         }
       } catch (error) {
         console.error(
@@ -86,7 +148,9 @@ export default function Home() {
 
         if (!mounted) return;
 
-        setUser(session?.user ?? null);
+        setUser(
+          session?.user ?? null
+        );
 
         if (event === "SIGNED_IN") {
           setActiveTab("home");
@@ -96,6 +160,7 @@ export default function Home() {
         if (event === "SIGNED_OUT") {
           setActiveTab("home");
           setShowActivities(false);
+          setEarnState(null);
         }
       }
     );
@@ -105,6 +170,321 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, []);
+
+  /*
+   * ---------------------------------------------------------
+   * DAILY TAP - LOAD SERVER STATE
+   * ---------------------------------------------------------
+   */
+
+  async function loadEarnState() {
+    if (!user) return;
+
+    setEarnLoading(true);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setEarnState(null);
+        return;
+      }
+
+      const response = await fetch(
+        "/api/earn/claim",
+        {
+          method: "GET",
+          headers: {
+            Authorization:
+              `Bearer ${session.access_token}`,
+          },
+          cache: "no-store",
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        console.error(
+          "Earn state error:",
+          result
+        );
+
+        setMessage(
+          result.error ||
+            "Unable to load Daily Tap."
+        );
+
+        return;
+      }
+
+      setEarnState(result);
+    } catch (error) {
+      console.error(
+        "Load earn state error:",
+        error
+      );
+
+      setMessage(
+        "Unable to load Daily Tap right now."
+      );
+    } finally {
+      setEarnLoading(false);
+    }
+  }
+
+  /*
+   * Load Daily Tap whenever user enters Earn.
+   */
+
+  useEffect(() => {
+    if (!user) {
+      setEarnState(null);
+      return;
+    }
+
+    if (activeTab === "earn") {
+      loadEarnState();
+    }
+  }, [user, activeTab]);
+
+  /*
+   * ---------------------------------------------------------
+   * LIVE COUNTDOWN
+   * ---------------------------------------------------------
+   *
+   * This only updates the visible clock.
+   * The server remains the source of truth.
+   */
+
+  useEffect(() => {
+    if (
+      !earnState ||
+      !user ||
+      activeTab !== "earn"
+    ) {
+      return;
+    }
+
+    const timer =
+      window.setInterval(() => {
+        setEarnState((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            nowMs: Date.now(),
+          };
+        });
+      }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    user,
+    activeTab,
+    earnState?.status,
+    earnState?.cycleEndMs,
+    earnState?.claimDeadlineMs,
+  ]);
+
+  /*
+   * ---------------------------------------------------------
+   * AUTOMATIC CYCLE BOUNDARY REFRESH
+   * ---------------------------------------------------------
+   *
+   * Instead of calling the server every second, we schedule
+   * one refresh when the current important boundary arrives.
+   *
+   * EARNING:
+   *     2 hours -> refresh -> CLAIM
+   *
+   * CLAIM:
+   *     20 minutes -> refresh -> next server state
+   */
+
+  useEffect(() => {
+    if (
+      !earnState ||
+      !user ||
+      activeTab !== "earn"
+    ) {
+      return;
+    }
+
+    let targetTime: number | null = null;
+
+    if (
+      earnState.status === "earning" &&
+      earnState.cycleEndMs
+    ) {
+      targetTime =
+        earnState.cycleEndMs;
+    }
+
+    if (
+      earnState.status === "claim" &&
+      earnState.claimDeadlineMs
+    ) {
+      targetTime =
+        earnState.claimDeadlineMs;
+    }
+
+    if (!targetTime) {
+      return;
+    }
+
+    const now = Date.now();
+
+    const delay = Math.max(
+      100,
+      targetTime - now + 100
+    );
+
+    const timer =
+      window.setTimeout(() => {
+        loadEarnState();
+      }, delay);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    user,
+    activeTab,
+    earnState?.status,
+    earnState?.cycleEndMs,
+    earnState?.claimDeadlineMs,
+  ]);
+
+  /*
+   * ---------------------------------------------------------
+   * DAILY TAP - CLAIM
+   * ---------------------------------------------------------
+   */
+
+  async function claimDailyTap() {
+    if (!user || claimLoading) {
+      return;
+    }
+
+    setClaimLoading(true);
+    setMessage("");
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session) {
+        setMessage(
+          "Your session has expired. Please log in again."
+        );
+
+        return;
+      }
+
+      const response = await fetch(
+        "/api/earn/claim",
+        {
+          method: "POST",
+          headers: {
+            Authorization:
+              `Bearer ${session.access_token}`,
+          },
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        setMessage(
+          result.error ||
+            "Unable to claim this cycle."
+        );
+
+        await loadEarnState();
+
+        return;
+      }
+
+      setMessage(
+        `₦${Number(
+          result.amount || 0
+        ).toLocaleString()} claimed successfully! 🎉`
+      );
+
+      await loadEarnState();
+    } catch (error) {
+      console.error(
+        "Claim Daily Tap error:",
+        error
+      );
+
+      setMessage(
+        "Something went wrong while claiming."
+      );
+    } finally {
+      setClaimLoading(false);
+    }
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * TIMER FORMAT
+   * ---------------------------------------------------------
+   */
+
+  function formatCountdown(
+    milliseconds: number
+  ) {
+    const safe =
+      Math.max(
+        0,
+        milliseconds
+      );
+
+    const totalSeconds =
+      Math.floor(
+        safe / 1000
+      );
+
+    const hours =
+      Math.floor(
+        totalSeconds / 3600
+      );
+
+    const minutes =
+      Math.floor(
+        (totalSeconds % 3600) /
+          60
+      );
+
+    const seconds =
+      totalSeconds % 60;
+
+    return [
+      String(hours).padStart(
+        2,
+        "0"
+      ),
+      String(minutes).padStart(
+        2,
+        "0"
+      ),
+      String(seconds).padStart(
+        2,
+        "0"
+      ),
+    ].join(":");
+  }
 
   /*
    * ---------------------------------------------------------
@@ -126,6 +506,7 @@ export default function Home() {
       setMessage(
         "Please enter your email address."
       );
+
       return;
     }
 
@@ -136,6 +517,7 @@ export default function Home() {
       setMessage(
         "Please enter your password."
       );
+
       return;
     }
 
@@ -146,6 +528,7 @@ export default function Home() {
       setMessage(
         "Password must be at least 6 characters."
       );
+
       return;
     }
 
@@ -156,6 +539,7 @@ export default function Home() {
       setMessage(
         "Passwords do not match."
       );
+
       return;
     }
 
@@ -172,22 +556,23 @@ export default function Home() {
         const {
           data,
           error,
-        } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password,
-        });
+        } =
+          await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+          });
 
         if (error) {
-          setMessage(error.message);
+          setMessage(
+            error.message
+          );
+
           return;
         }
 
-        /*
-         * Keep referral code locally for now.
-         * Referral database logic will be connected later.
-         */
-
-        if (referralCode.trim()) {
+        if (
+          referralCode.trim()
+        ) {
           localStorage.setItem(
             "tapbumber_pending_referral",
             referralCode
@@ -197,7 +582,10 @@ export default function Home() {
         }
 
         if (data.session?.user) {
-          setUser(data.session.user);
+          setUser(
+            data.session.user
+          );
+
           setActiveTab("home");
 
           setPassword("");
@@ -241,7 +629,10 @@ export default function Home() {
           );
 
         if (error) {
-          setMessage(error.message);
+          setMessage(
+            error.message
+          );
+
           return;
         }
 
@@ -276,7 +667,10 @@ export default function Home() {
           return;
         }
 
-        setUser(loggedInUser);
+        setUser(
+          loggedInUser
+        );
+
         setActiveTab("home");
 
         setPassword("");
@@ -296,7 +690,8 @@ export default function Home() {
        */
 
       const redirectTo =
-        typeof window !== "undefined"
+        typeof window !==
+        "undefined"
           ? `${window.location.origin}/`
           : undefined;
 
@@ -309,7 +704,10 @@ export default function Home() {
         );
 
       if (error) {
-        setMessage(error.message);
+        setMessage(
+          error.message
+        );
+
         return;
       }
 
@@ -337,7 +735,9 @@ export default function Home() {
    */
 
   async function logout() {
-    if (loading) return;
+    if (loading) {
+      return;
+    }
 
     setLoading(true);
     setMessage("");
@@ -352,11 +752,15 @@ export default function Home() {
           error
         );
 
-        setMessage(error.message);
+        setMessage(
+          error.message
+        );
+
         return;
       }
 
       setUser(null);
+      setEarnState(null);
       setActiveTab("home");
       setShowActivities(false);
 
@@ -368,7 +772,10 @@ export default function Home() {
       setCopied(false);
       setAuthMode("login");
 
-      if (typeof window !== "undefined") {
+      if (
+        typeof window !==
+        "undefined"
+      ) {
         window.scrollTo({
           top: 0,
           behavior: "smooth",
@@ -395,7 +802,9 @@ export default function Home() {
    */
 
   async function copyReferralLink() {
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     const code =
       referralCode.trim() ||
@@ -430,6 +839,12 @@ export default function Home() {
    */
 
   function renderHome() {
+    const balance =
+      earnState?.balance ?? 0;
+
+    const totalEarned =
+      earnState?.totalEarned ?? 0;
+
     return (
       <>
         <div className="rounded-3xl border border-white/10 bg-black/55 p-5 shadow-2xl backdrop-blur-xl">
@@ -447,7 +862,14 @@ export default function Home() {
             </p>
 
             <p className="mt-2 text-4xl font-black text-yellow-400">
-              ₦0.00
+              ₦
+              {balance.toLocaleString(
+                "en-NG",
+                {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                }
+              )}
             </p>
           </div>
 
@@ -468,7 +890,14 @@ export default function Home() {
               </p>
 
               <p className="mt-2 text-xl font-black">
-                ₦0.00
+                ₦
+                {totalEarned.toLocaleString(
+                  "en-NG",
+                  {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  }
+                )}
               </p>
             </div>
           </div>
@@ -566,236 +995,551 @@ export default function Home() {
   }
 
   /*
- * ---------------------------------------------------------
- * EARN
- * ---------------------------------------------------------
- */
+   * ---------------------------------------------------------
+   * DAILY TAP
+   * ---------------------------------------------------------
+   */
 
-function renderEarn() {
-  const activities: Activity[] = [
-    {
-      id: "daily-tap",
-      icon: "👆",
-      title: "Daily Tap",
-      description:
-        "Complete your daily tap activity.",
-      reward: "ACTIVITY",
-    },
-    {
-      id: "daily-check",
-      icon: "✅",
-      title: "Daily Check-In",
-      description:
-        "Check in once each day.",
-      reward: "DAILY",
-    },
-    {
-      id: "community",
-      icon: "💬",
-      title: "Community Activity",
-      description:
-        "Visit the TapBumber community.",
-      reward: "COMMUNITY",
-    },
-  ];
-
-  function getTodayKey() {
-    const now = new Date();
-
-    const year = now.getFullYear();
-    const month = String(
-      now.getMonth() + 1
-    ).padStart(2, "0");
-    const day = String(
-      now.getDate()
-    ).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
-
-  function hasCheckedInToday() {
-    if (!user) return false;
-
-    const saved =
-      localStorage.getItem(
-        `tapbumber_daily_checkin_${user.id}`
+  function renderDailyTapCard() {
+    if (earnLoading) {
+      return (
+        <div className="mt-4 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+          <p className="text-center text-sm font-bold text-yellow-200">
+            Checking your earning cycle...
+          </p>
+        </div>
       );
-
-    return saved === getTodayKey();
-  }
-
-  function completeDailyCheckIn() {
-    if (!user) return;
-
-    const today = getTodayKey();
-
-    const saved =
-      localStorage.getItem(
-        `tapbumber_daily_checkin_${user.id}`
-      );
-
-    if (saved === today) {
-      setMessage(
-        "You have already checked in today. Come back tomorrow! ✅"
-      );
-
-      return;
     }
 
-    localStorage.setItem(
-      `tapbumber_daily_checkin_${user.id}`,
-      today
-    );
+    if (!earnState) {
+      return (
+        <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 p-4">
+          <p className="text-center text-sm text-red-200">
+            Unable to load your earning cycle.
+          </p>
 
-    setMessage(
-      "Daily Check-In completed successfully! ✅"
-    );
-  }
+          <button
+            type="button"
+            onClick={loadEarnState}
+            className="mt-3 w-full rounded-xl bg-yellow-400 px-4 py-3 text-xs font-black text-black"
+          >
+            TRY AGAIN
+          </button>
+        </div>
+      );
+    }
 
-  function openActivity(
-    activity: Activity
-  ) {
-    if (activity.id === "community") {
-      window.open(
-        "https://chat.whatsapp.com/FU2IG0W8kt3CKRrOAFql0d",
-        "_blank",
-        "noopener,noreferrer"
+    if (
+      !earnState.isActivated ||
+      earnState.status === "inactive"
+    ) {
+      return (
+        <div className="mt-4 rounded-2xl border border-orange-400/20 bg-orange-400/10 p-4">
+          <p className="font-black text-orange-200">
+            Account activation required
+          </p>
+
+          <p className="mt-1 text-xs leading-5 text-orange-100/70">
+            Activate your TapBumber account before starting Daily Tap.
+          </p>
+        </div>
+      );
+    }
+
+    if (
+      earnState.status ===
+      "complete"
+    ) {
+      return (
+        <div className="mt-4 rounded-2xl border border-green-400/20 bg-green-400/10 p-5">
+          <p className="text-center text-2xl">
+            🎉
+          </p>
+
+          <p className="mt-2 text-center font-black text-green-300">
+            All 12 cycles completed!
+          </p>
+
+          <p className="mt-1 text-center text-xs text-green-100/70">
+            Come back after the next 5 PM WAT earning period.
+          </p>
+        </div>
+      );
+    }
+
+    const now =
+      earnState.nowMs;
+
+    const cycleEnd =
+      earnState.cycleEndMs ??
+      now;
+
+    const claimDeadline =
+      earnState.claimDeadlineMs ??
+      now;
+
+    const remainingToEnd =
+      Math.max(
+        0,
+        cycleEnd - now
       );
 
-      return;
-    }
-
-    if (activity.id === "daily-tap") {
-      setMessage(
-        "Daily Tap will be connected to the TapBumber earning system next."
+    const remainingClaim =
+      Math.max(
+        0,
+        claimDeadline - now
       );
 
-      return;
+    if (
+      earnState.status ===
+      "earning"
+    ) {
+      const cycleDuration =
+        2 *
+        60 *
+        60 *
+        1000;
+
+      const progress =
+        Math.max(
+          0,
+          Math.min(
+            100,
+            100 -
+              (remainingToEnd /
+                cycleDuration) *
+                100
+          )
+        );
+
+      return (
+        <div className="mt-4 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-5">
+          <div className="text-center">
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-200">
+              CYCLE{" "}
+              {earnState.cycleIndex}{" "}
+              OF{" "}
+              {earnState.maxCycles}
+            </p>
+
+            <p className="mt-3 text-xs text-slate-400">
+              Earning in progress
+            </p>
+
+            <p className="mt-2 font-mono text-4xl font-black text-white">
+              {formatCountdown(
+                remainingToEnd
+              )}
+            </p>
+
+            <p className="mt-2 text-xs text-slate-400">
+              Time remaining until you can claim
+            </p>
+          </div>
+
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-black/40">
+            <div
+              className="h-full rounded-full bg-blue-400 transition-all"
+              style={{
+                width: `${progress}%`,
+              }}
+            />
+          </div>
+
+          <div className="mt-4 rounded-xl bg-black/30 p-3 text-center">
+            <p className="text-xs text-slate-400">
+              Your reward
+            </p>
+
+            <p className="mt-1 text-xl font-black text-yellow-400">
+              ₦
+              {earnState.amount.toLocaleString()}
+            </p>
+          </div>
+        </div>
+      );
     }
 
-    if (activity.id === "daily-check") {
-      completeDailyCheckIn();
+    if (
+      earnState.status ===
+      "claim"
+    ) {
+      return (
+        <div className="mt-4 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-5">
+          <div className="text-center">
+            <p className="text-xs font-bold uppercase tracking-wider text-yellow-300">
+              CYCLE{" "}
+              {earnState.cycleIndex}{" "}
+              READY
+            </p>
 
-      return;
-    }
-  }
+            <p className="mt-2 text-3xl font-black text-yellow-400">
+              ₦
+              {earnState.amount.toLocaleString()}
+            </p>
 
-  return (
-    <div className="space-y-4">
-      <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
-        <p className="text-sm text-yellow-300">
-          EARNING
-        </p>
+            <p className="mt-2 text-xs text-slate-300">
+              Claim window remaining
+            </p>
 
-        <h2 className="mt-1 text-2xl font-black">
-          Earn on TapBumber
-        </h2>
-
-        <p className="mt-2 text-sm leading-6 text-slate-300">
-          Complete available activities and
-          participate in TapBumber to earn.
-        </p>
-
-        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-black">
-                Daily Activities
-              </p>
-
-              <p className="mt-1 text-xs text-slate-400">
-                Available activities for today
-              </p>
-            </div>
-
-            <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
-              {activities.length}
-            </span>
+            <p className="mt-1 font-mono text-3xl font-black text-white">
+              {formatCountdown(
+                remainingClaim
+              )}
+            </p>
           </div>
 
           <button
             type="button"
-            onClick={() =>
-              setShowActivities(
-                !showActivities
-              )
+            onClick={
+              claimDailyTap
             }
-            className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+            disabled={
+              claimLoading ||
+              !earnState.canClaim
+            }
+            className="mt-5 w-full rounded-2xl bg-yellow-400 px-4 py-4 font-black text-black transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {showActivities
-              ? "HIDE ACTIVITIES"
-              : "VIEW ACTIVITIES"}
+            {claimLoading
+              ? "CLAIMING..."
+              : `CLAIM ₦${earnState.amount}`}
+          </button>
+
+          <p className="mt-3 text-center text-[11px] text-slate-400">
+            You have 20 minutes to claim this cycle.
+          </p>
+        </div>
+      );
+    }
+
+    if (
+      earnState.status ===
+      "expired"
+    ) {
+      return (
+        <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 p-5">
+          <p className="text-center text-2xl">
+            ⏰
+          </p>
+
+          <p className="mt-2 text-center font-black text-red-300">
+            Claim window expired
+          </p>
+
+          <p className="mt-2 text-center text-xs leading-5 text-red-100/70">
+            The 20-minute claim window for this cycle has passed.
+          </p>
+
+          <button
+            type="button"
+            onClick={
+              loadEarnState
+            }
+            className="mt-4 w-full rounded-xl border border-red-400/20 bg-black/30 px-4 py-3 text-xs font-black text-red-200"
+          >
+            REFRESH CYCLE
           </button>
         </div>
-      </div>
+      );
+    }
 
-      {showActivities && (
-        <div className="space-y-3">
-          {activities.map((activity) => {
-            const checkedIn =
-              activity.id ===
-                "daily-check" &&
-              hasCheckedInToday();
+    return null;
+  }
 
-            return (
-              <div
-                key={activity.id}
-                className="rounded-3xl border border-white/10 bg-black/55 p-4 backdrop-blur-xl"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 text-2xl">
-                    {activity.icon}
-                  </div>
+  /*
+   * ---------------------------------------------------------
+   * EARN
+   * ---------------------------------------------------------
+   */
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-black">
-                          {activity.title}
-                        </h3>
+  function renderEarn() {
+    const activities: Activity[] =
+      [
+        {
+          id: "daily-tap",
+          icon: "👆",
+          title: "Daily Tap",
+          description:
+            "Complete your 2-hour earning cycle and claim your reward.",
+          reward:
+            earnState?.amount
+              ? `₦${earnState.amount}`
+              : "ACTIVITY",
+        },
+        {
+          id: "daily-check",
+          icon: "✅",
+          title: "Daily Check-In",
+          description:
+            "Check in once each day.",
+          reward: "DAILY",
+        },
+        {
+          id: "community",
+          icon: "💬",
+          title: "Community Activity",
+          description:
+            "Visit the TapBumber community.",
+          reward: "COMMUNITY",
+        },
+      ];
 
-                        <p className="mt-1 text-xs leading-5 text-slate-400">
-                          {activity.description}
-                        </p>
+    function getTodayKey() {
+      const now =
+        new Date();
+
+      const year =
+        now.getFullYear();
+
+      const month =
+        String(
+          now.getMonth() + 1
+        ).padStart(
+          2,
+          "0"
+        );
+
+      const day =
+        String(
+          now.getDate()
+        ).padStart(
+          2,
+          "0"
+        );
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function hasCheckedInToday() {
+      if (!user) {
+        return false;
+      }
+
+      const saved =
+        localStorage.getItem(
+          `tapbumber_daily_checkin_${user.id}`
+        );
+
+      return (
+        saved ===
+        getTodayKey()
+      );
+    }
+
+    function completeDailyCheckIn() {
+      if (!user) {
+        return;
+      }
+
+      const today =
+        getTodayKey();
+
+      const saved =
+        localStorage.getItem(
+          `tapbumber_daily_checkin_${user.id}`
+        );
+
+      if (saved === today) {
+        setMessage(
+          "You have already checked in today. Come back tomorrow! ✅"
+        );
+
+        return;
+      }
+
+      localStorage.setItem(
+        `tapbumber_daily_checkin_${user.id}`,
+        today
+      );
+
+      setMessage(
+        "Daily Check-In completed successfully! ✅"
+      );
+    }
+
+    function openActivity(
+      activity: Activity
+    ) {
+      if (
+        activity.id ===
+        "community"
+      ) {
+        window.open(
+          "https://chat.whatsapp.com/FU2IG0W8kt3CKRrOAFql0d",
+          "_blank",
+          "noopener,noreferrer"
+        );
+
+        return;
+      }
+
+      if (
+        activity.id ===
+        "daily-tap"
+      ) {
+        setMessage("");
+
+        return;
+      }
+
+      if (
+        activity.id ===
+        "daily-check"
+      ) {
+        completeDailyCheckIn();
+
+        return;
+      }
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur-xl">
+          <p className="text-sm text-yellow-300">
+            EARNING
+          </p>
+
+          <h2 className="mt-1 text-2xl font-black">
+            Earn on TapBumber
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            Complete available activities and participate in TapBumber to earn.
+          </p>
+
+          <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-black">
+                  Daily Activities
+                </p>
+
+                <p className="mt-1 text-xs text-slate-400">
+                  Available activities for today
+                </p>
+              </div>
+
+              <span className="rounded-xl bg-yellow-400 px-3 py-1 text-xs font-black text-black">
+                {
+                  activities.length
+                }
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowActivities(
+                  !showActivities
+                )
+              }
+              className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-3 font-black text-black active:scale-95"
+            >
+              {showActivities
+                ? "HIDE ACTIVITIES"
+                : "VIEW ACTIVITIES"}
+            </button>
+          </div>
+        </div>
+
+        {showActivities && (
+          <div className="space-y-3">
+            {activities.map(
+              (activity) => {
+                const checkedIn =
+                  activity.id ===
+                    "daily-check" &&
+                  hasCheckedInToday();
+
+                return (
+                  <div
+                    key={
+                      activity.id
+                    }
+                    className="rounded-3xl border border-white/10 bg-black/55 p-4 backdrop-blur-xl"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 text-2xl">
+                        {
+                          activity.icon
+                        }
                       </div>
 
-                      <span className="shrink-0 text-xs font-black text-yellow-400">
-                        {checkedIn
-                          ? "DONE"
-                          : activity.reward}
-                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-black">
+                              {
+                                activity.title
+                              }
+                            </h3>
+
+                            <p className="mt-1 text-xs leading-5 text-slate-400">
+                              {
+                                activity.description
+                              }
+                            </p>
+                          </div>
+
+                          <span className="shrink-0 text-xs font-black text-yellow-400">
+                            {checkedIn
+                              ? "DONE"
+                              : activity.reward}
+                          </span>
+                        </div>
+
+                        {activity.id ===
+                        "daily-tap" ? (
+                          <>
+                            {
+                              renderDailyTapCard()
+                            }
+
+                            <button
+                              type="button"
+                              onClick={
+                                loadEarnState
+                              }
+                              className="mt-3 text-xs font-bold text-slate-500 underline"
+                            >
+                              REFRESH CYCLE
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openActivity(
+                                activity
+                              )
+                            }
+                            disabled={
+                              checkedIn
+                            }
+                            className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {checkedIn
+                              ? "CHECKED IN ✅"
+                              : "OPEN ACTIVITY"}
+                          </button>
+                        )}
+                      </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openActivity(
-                          activity
-                        )
-                      }
-                      disabled={checkedIn}
-                      className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {checkedIn
-                        ? "CHECKED IN ✅"
-                        : "OPEN ACTIVITY"}
-                    </button>
                   </div>
-                </div>
-              </div>
-             );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+                );
+              }
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
-/*
- * ---------------------------------------------------------
- * GAMES
- * ---------------------------------------------------------
- */
+  /*
+   * ---------------------------------------------------------
+   * GAMES
+   * ---------------------------------------------------------
+   */
 
   function renderGames() {
     return (
@@ -809,41 +1553,51 @@ function renderEarn() {
         </h2>
 
         <p className="mt-2 text-sm text-slate-400">
-          Games will be connected and tested
-          in the next step.
+          Games will be connected and tested in the next step.
         </p>
 
         <div className="mt-5 space-y-3">
           {[
-            ["🎯", "Tap Challenge"],
-            ["🧠", "Quick Quiz"],
-            ["🔢", "Number Challenge"],
-          ].map(([icon, name]) => (
-            <button
-              type="button"
-              key={name}
-              onClick={() =>
-                setMessage(
-                  `${name} will open here.`
-                )
-              }
-              className="flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-left active:scale-[0.98]"
-            >
-              <span className="text-2xl">
-                {icon}
-              </span>
-
-              <span>
-                <span className="block font-black">
-                  {name}
+            [
+              "🎯",
+              "Tap Challenge",
+            ],
+            [
+              "🧠",
+              "Quick Quiz",
+            ],
+            [
+              "🔢",
+              "Number Challenge",
+            ],
+          ].map(
+            ([icon, name]) => (
+              <button
+                type="button"
+                key={name}
+                onClick={() =>
+                  setMessage(
+                    `${name} will open here.`
+                  )
+                }
+                className="flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-left active:scale-[0.98]"
+              >
+                <span className="text-2xl">
+                  {icon}
                 </span>
 
-                <span className="text-xs text-slate-400">
-                  Tap to open
+                <span>
+                  <span className="block font-black">
+                    {name}
+                  </span>
+
+                  <span className="text-xs text-slate-400">
+                    Tap to open
+                  </span>
                 </span>
-              </span>
-            </button>
-          ))}
+              </button>
+            )
+          )}
         </div>
       </div>
     );
@@ -863,7 +1617,8 @@ function renderEarn() {
       "TAPUSER";
 
     const link =
-      typeof window !== "undefined"
+      typeof window !==
+      "undefined"
         ? `${window.location.origin}/?ref=${code}`
         : `?ref=${code}`;
 
@@ -878,9 +1633,7 @@ function renderEarn() {
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-slate-300">
-          Share your referral link with people
-          you genuinely want to invite to
-          TapBumber.
+          Share your referral link with people you genuinely want to invite to TapBumber.
         </p>
 
         <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -905,7 +1658,9 @@ function renderEarn() {
 
         <button
           type="button"
-          onClick={copyReferralLink}
+          onClick={
+            copyReferralLink
+          }
           className="mt-4 w-full rounded-2xl bg-yellow-400 px-4 py-4 font-black text-black active:scale-[0.98]"
         >
           {copied
@@ -933,6 +1688,9 @@ function renderEarn() {
    */
 
   function renderWallet() {
+    const balance =
+      earnState?.balance ?? 0;
+
     return (
       <div className="space-y-4">
         <div className="rounded-3xl border border-yellow-400/20 bg-black/55 p-5 backdrop-blur-xl">
@@ -945,7 +1703,14 @@ function renderEarn() {
           </h2>
 
           <p className="mt-5 text-4xl font-black text-yellow-400">
-            ₦0.00
+            ₦
+            {balance.toLocaleString(
+              "en-NG",
+              {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              }
+            )}
           </p>
         </div>
 
@@ -955,8 +1720,7 @@ function renderEarn() {
           </h3>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            Your withdrawal account and eligibility
-            will be connected here.
+            Your withdrawal account and eligibility will be connected here.
           </p>
 
           <button
@@ -1031,19 +1795,24 @@ function renderEarn() {
             </header>
 
             <div className="mt-6">
-              {activeTab === "home" &&
+              {activeTab ===
+                "home" &&
                 renderHome()}
 
-              {activeTab === "earn" &&
+              {activeTab ===
+                "earn" &&
                 renderEarn()}
 
-              {activeTab === "games" &&
+              {activeTab ===
+                "games" &&
                 renderGames()}
 
-              {activeTab === "refer" &&
+              {activeTab ===
+                "refer" &&
                 renderRefer()}
 
-              {activeTab === "wallet" &&
+              {activeTab ===
+                "wallet" &&
                 renderWallet()}
             </div>
 
@@ -1066,13 +1835,37 @@ function renderEarn() {
             <nav className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md border-t border-white/10 bg-[#030712]/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
               <div className="grid grid-cols-5 gap-1">
                 {[
-                  ["home", "🏠", "Home"],
-                  ["earn", "🎯", "Earn"],
-                  ["games", "🎮", "Games"],
-                  ["refer", "👥", "Refer"],
-                  ["wallet", "💰", "Wallet"],
+                  [
+                    "home",
+                    "🏠",
+                    "Home",
+                  ],
+                  [
+                    "earn",
+                    "🎯",
+                    "Earn",
+                  ],
+                  [
+                    "games",
+                    "🎮",
+                    "Games",
+                  ],
+                  [
+                    "refer",
+                    "👥",
+                    "Refer",
+                  ],
+                  [
+                    "wallet",
+                    "💰",
+                    "Wallet",
+                  ],
                 ].map(
-                  ([tab, icon, label]) => (
+                  ([
+                    tab,
+                    icon,
+                    label,
+                  ]) => (
                     <button
                       type="button"
                       key={tab}
@@ -1082,7 +1875,8 @@ function renderEarn() {
                         )
                       }
                       className={`rounded-2xl px-1 py-2 text-center transition active:scale-95 ${
-                        activeTab === tab
+                        activeTab ===
+                        tab
                           ? "bg-yellow-400 text-black"
                           : "text-slate-400"
                       }`}
@@ -1111,7 +1905,10 @@ function renderEarn() {
    * ---------------------------------------------------------
    */
 
-  if (loading && !user) {
+  if (
+    loading &&
+    !user
+  ) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
         <div className="text-center">
@@ -1170,24 +1967,30 @@ function renderEarn() {
           <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
             <div className="mb-5 text-center">
               <h2 className="text-2xl font-black">
-                {authMode === "signup"
+                {authMode ===
+                "signup"
                   ? "Create Your Account"
-                  : authMode === "login"
+                  : authMode ===
+                      "login"
                     ? "Welcome Back"
                     : "Reset Password"}
               </h2>
 
               <p className="mt-2 text-sm text-slate-300">
-                {authMode === "signup"
+                {authMode ===
+                "signup"
                   ? "Join TapBumber and start your journey."
-                  : authMode === "login"
+                  : authMode ===
+                      "login"
                     ? "Login to continue to your TapBumber account."
                     : "Enter your email to reset your password."}
               </p>
             </div>
 
             <form
-              onSubmit={handleAuth}
+              onSubmit={
+                handleAuth
+              }
               className="space-y-3"
             >
               <div>
@@ -1210,7 +2013,8 @@ function renderEarn() {
                 />
               </div>
 
-              {authMode !== "reset" && (
+              {authMode !==
+                "reset" && (
                 <div>
                   <label className="mb-1.5 block text-sm font-bold">
                     Password
@@ -1223,19 +2027,25 @@ function renderEarn() {
                           ? "text"
                           : "password"
                       }
-                      value={password}
+                      value={
+                        password
+                      }
                       onChange={(e) =>
                         setPassword(
-                          e.target.value
+                          e.target
+                            .value
                         )
                       }
                       placeholder="Enter your password"
                       autoComplete={
-                        authMode === "signup"
+                        authMode ===
+                        "signup"
                           ? "new-password"
                           : "current-password"
                       }
-                      disabled={loading}
+                      disabled={
+                        loading
+                      }
                       className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 pr-20 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400 disabled:opacity-60"
                     />
 
@@ -1246,7 +2056,9 @@ function renderEarn() {
                           !showPassword
                         )
                       }
-                      disabled={loading}
+                      disabled={
+                        loading
+                      }
                       className="absolute right-3 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-black text-yellow-400"
                     >
                       {showPassword
@@ -1257,7 +2069,8 @@ function renderEarn() {
                 </div>
               )}
 
-              {authMode === "signup" && (
+              {authMode ===
+                "signup" && (
                 <>
                   <div>
                     <label className="mb-1.5 block text-sm font-bold">
@@ -1275,12 +2088,15 @@ function renderEarn() {
                       }
                       onChange={(e) =>
                         setConfirmPassword(
-                          e.target.value
+                          e.target
+                            .value
                         )
                       }
                       placeholder="Confirm your password"
                       autoComplete="new-password"
-                      disabled={loading}
+                      disabled={
+                        loading
+                      }
                       className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-400 focus:border-yellow-400 disabled:opacity-60"
                     />
                   </div>
@@ -1305,7 +2121,9 @@ function renderEarn() {
                       }
                       placeholder="Enter referral code"
                       autoComplete="off"
-                      disabled={loading}
+                      disabled={
+                        loading
+                      }
                       className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white uppercase outline-none placeholder:text-slate-400 focus:border-yellow-400 disabled:opacity-60"
                     />
                   </div>
@@ -1320,28 +2138,41 @@ function renderEarn() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={
+                  loading
+                }
                 className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-5 py-4 text-base font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.18)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading
                   ? "PLEASE WAIT..."
-                  : authMode === "signup"
+                  : authMode ===
+                      "signup"
                     ? "SIGN UP 🚀"
-                    : authMode === "login"
+                    : authMode ===
+                        "login"
                       ? "LOGIN 🔐"
                       : "SEND RESET LINK 📧"}
               </button>
             </form>
 
-            {authMode === "login" && (
+            {authMode ===
+              "login" && (
               <div className="mt-4 text-center">
                 <button
                   type="button"
                   onClick={() => {
-                    setAuthMode("reset");
-                    setMessage("");
-                    setPassword("");
-                    setConfirmPassword("");
+                    setAuthMode(
+                      "reset"
+                    );
+                    setMessage(
+                      ""
+                    );
+                    setPassword(
+                      ""
+                    );
+                    setConfirmPassword(
+                      ""
+                    );
                   }}
                   className="text-sm font-black text-yellow-400"
                 >
@@ -1351,16 +2182,25 @@ function renderEarn() {
             )}
 
             <div className="mt-4 text-center text-sm text-slate-300">
-              {authMode === "signup" ? (
+              {authMode ===
+              "signup" ? (
                 <>
                   Already have an account?{" "}
                   <button
                     type="button"
                     onClick={() => {
-                      setAuthMode("login");
-                      setMessage("");
-                      setPassword("");
-                      setConfirmPassword("");
+                      setAuthMode(
+                        "login"
+                      );
+                      setMessage(
+                        ""
+                      );
+                      setPassword(
+                        ""
+                      );
+                      setConfirmPassword(
+                        ""
+                      );
                     }}
                     className="font-black text-yellow-400"
                   >
@@ -1373,9 +2213,15 @@ function renderEarn() {
                   <button
                     type="button"
                     onClick={() => {
-                      setAuthMode("signup");
-                      setMessage("");
-                      setPassword("");
+                      setAuthMode(
+                        "signup"
+                      );
+                      setMessage(
+                        ""
+                      );
+                      setPassword(
+                        ""
+                      );
                     }}
                     className="font-black text-yellow-400"
                   >
