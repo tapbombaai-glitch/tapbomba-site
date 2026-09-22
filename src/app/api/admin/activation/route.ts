@@ -65,7 +65,11 @@ export async function GET(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json(
-        { error: authError || "Admin access denied." },
+        {
+          error:
+            authError ||
+            "Admin access denied.",
+        },
         { status: 403 }
       );
     }
@@ -92,7 +96,9 @@ export async function GET(request: NextRequest) {
       );
 
       return NextResponse.json(
-        { error: error.message },
+        {
+          error: error.message,
+        },
         { status: 500 }
       );
     }
@@ -101,7 +107,10 @@ export async function GET(request: NextRequest) {
       requests: data || [],
     });
   } catch (error) {
-    console.error("Admin GET error:", error);
+    console.error(
+      "Admin GET error:",
+      error
+    );
 
     return NextResponse.json(
       {
@@ -131,9 +140,96 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    const requestId = body?.requestId;
     const action = body?.action;
+    const requestId = body?.requestId;
     const reply = body?.reply;
+    const packageType = body?.packageType;
+
+    /*
+     * --------------------------------------------------
+     * USER REQUESTS PAYMENT DETAILS
+     * --------------------------------------------------
+     *
+     * This action does NOT need requestId.
+     * The authenticated user's ID is used instead.
+     */
+
+    if (action === "request_payment_details") {
+      if (
+        packageType !== "standard" &&
+        packageType !== "premium"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid package selected.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const packageName =
+        packageType === "standard"
+          ? "STANDARD"
+          : "PREMIUM";
+
+      const fee =
+        packageType === "standard"
+          ? 3000
+          : 5000;
+
+      const now =
+        new Date().toISOString();
+
+      const message =
+        `Payment details requested for ${packageName} package. ` +
+        `Activation fee: ₦${fee.toLocaleString()}.`;
+
+      const { data, error } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .insert({
+            user_id: user.id,
+            message,
+            status:
+              "payment_details_requested",
+            payment_reference: null,
+            payment_note: null,
+            admin_reply: null,
+            created_at: now,
+            updated_at: now,
+          })
+          .select(
+            "id, user_id, message, status, created_at"
+          )
+          .single();
+
+      if (error) {
+        console.error(
+          "Payment details request error:",
+          error
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              error.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: data,
+        message:
+          "Payment-details request sent to TapBumber Admin.",
+      });
+    }
+
+    /*
+     * All actions below require an existing requestId.
+     */
 
     if (!requestId) {
       return NextResponse.json(
@@ -165,14 +261,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const { data: existingRequest, error } =
-        await supabaseAdmin
-          .from("activation_requests")
-          .select(
-            "id, user_id, status"
-          )
-          .eq("id", requestId)
-          .single();
+      const {
+        data: existingRequest,
+        error,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .select(
+          "id, user_id, status"
+        )
+        .eq("id", requestId)
+        .single();
 
       if (error || !existingRequest) {
         return NextResponse.json(
@@ -191,7 +289,8 @@ export async function POST(request: NextRequest) {
         await supabaseAdmin
           .from("activation_requests")
           .update({
-            admin_reply: reply.trim(),
+            admin_reply:
+              reply.trim(),
             status:
               existingRequest.status ===
               "approved"
@@ -242,7 +341,10 @@ export async function POST(request: NextRequest) {
       .eq("id", requestId)
       .single();
 
-    if (requestError || !activationRequest) {
+    if (
+      requestError ||
+      !activationRequest
+    ) {
       console.error(
         "Request lookup error:",
         requestError
@@ -304,19 +406,20 @@ export async function POST(request: NextRequest) {
     const now =
       new Date().toISOString();
 
-    const { error: profileError } =
-      await supabaseAdmin
-        .from("user_profiles")
-        .update({
-          is_activated: true,
-          package: packageName,
-          activated_at: now,
-          updated_at: now,
-        })
-        .eq(
-          "id",
-          activationRequest.user_id
-        );
+    const {
+      error: profileError,
+    } = await supabaseAdmin
+      .from("user_profiles")
+      .update({
+        is_activated: true,
+        package: packageName,
+        activated_at: now,
+        updated_at: now,
+      })
+      .eq(
+        "id",
+        activationRequest.user_id
+      );
 
     if (profileError) {
       console.error(
@@ -334,18 +437,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: updateError } =
-      await supabaseAdmin
-        .from("activation_requests")
-        .update({
-          status: "approved",
-          admin_reply:
-            `Activation approved for ${packageName.toUpperCase()} package.`,
-          reviewed_by: user.id,
-          reviewed_at: now,
-          updated_at: now,
-        })
-        .eq("id", requestId);
+    const {
+      error: updateError,
+    } = await supabaseAdmin
+      .from("activation_requests")
+      .update({
+        status: "approved",
+        admin_reply:
+          `Activation approved for ${packageName.toUpperCase()} package.`,
+        reviewed_by: user.id,
+        reviewed_at: now,
+        updated_at: now,
+      })
+      .eq("id", requestId);
 
     if (updateError) {
       console.error(
