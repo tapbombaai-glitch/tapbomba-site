@@ -3,9 +3,25 @@ import { NextRequest, NextResponse } from "next/server";
 
 const ADMIN_EMAIL = "tapbomba.ai@gmail.com";
 
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
+const SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+/*
+ * --------------------------------------------------
+ * SERVICE-ROLE CLIENT
+ * Used only for admin operations.
+ * --------------------------------------------------
+ */
+
 const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
   {
     auth: {
       autoRefreshToken: false,
@@ -14,17 +30,31 @@ const supabaseAdmin = createClient(
   }
 );
 
-async function getAdminUser(request: NextRequest) {
-  const authorization = request.headers.get("authorization");
+/*
+ * --------------------------------------------------
+ * GET AUTHENTICATED USER
+ * Used for normal logged-in users.
+ * --------------------------------------------------
+ */
 
-  if (!authorization?.startsWith("Bearer ")) {
+async function getAuthenticatedUser(
+  request: NextRequest
+) {
+  const authorization =
+    request.headers.get("authorization");
+
+  if (
+    !authorization?.startsWith("Bearer ")
+  ) {
     return {
       user: null,
       error: "Missing authorization token.",
     };
   }
 
-  const token = authorization.replace("Bearer ", "").trim();
+  const token = authorization
+    .replace("Bearer ", "")
+    .trim();
 
   if (!token) {
     return {
@@ -33,22 +63,31 @@ async function getAdminUser(request: NextRequest) {
     };
   }
 
+  const supabaseUser = createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    }
+  );
+
   const {
     data: { user },
     error,
-  } = await supabaseAdmin.auth.getUser(token);
+  } = await supabaseUser.auth.getUser();
 
   if (error || !user) {
     return {
       user: null,
       error: "Invalid or expired session.",
-    };
-  }
-
-  if (user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-    return {
-      user: null,
-      error: "Admin access denied.",
     };
   }
 
@@ -58,10 +97,51 @@ async function getAdminUser(request: NextRequest) {
   };
 }
 
-export async function GET(request: NextRequest) {
+/*
+ * --------------------------------------------------
+ * GET ADMIN USER
+ * Used only for admin operations.
+ * --------------------------------------------------
+ */
+
+async function getAdminUser(
+  request: NextRequest
+) {
+  const result =
+    await getAuthenticatedUser(request);
+
+  if (!result.user) {
+    return result;
+  }
+
+  if (
+    result.user.email?.toLowerCase() !==
+    ADMIN_EMAIL.toLowerCase()
+  ) {
+    return {
+      user: null,
+      error: "Admin access denied.",
+    };
+  }
+
+  return result;
+}
+
+/*
+ * --------------------------------------------------
+ * GET
+ * ADMIN LOADS ACTIVATION REQUESTS
+ * --------------------------------------------------
+ */
+
+export async function GET(
+  request: NextRequest
+) {
   try {
-    const { user, error: authError } =
-      await getAdminUser(request);
+    const {
+      user,
+      error: authError,
+    } = await getAdminUser(request);
 
     if (!user) {
       return NextResponse.json(
@@ -74,7 +154,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { data, error } = await supabaseAdmin
+    const {
+      data,
+      error,
+    } = await supabaseAdmin
       .from("activation_requests")
       .select(
         "id, user_id, message, status, payment_reference, payment_note, admin_reply, created_at, updated_at"
@@ -122,22 +205,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+/*
+ * --------------------------------------------------
+ * POST
+ * --------------------------------------------------
+ */
+
+export async function POST(
+  request: NextRequest
+) {
   try {
-    const { user, error: authError } =
-      await getAdminUser(request);
-
-    if (!user) {
-      return NextResponse.json(
-        {
-          error:
-            authError ||
-            "Admin access denied.",
-        },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json();
 
     const action = body?.action;
@@ -146,15 +223,36 @@ export async function POST(request: NextRequest) {
     const packageType = body?.packageType;
 
     /*
-     * --------------------------------------------------
-     * USER REQUESTS PAYMENT DETAILS
-     * --------------------------------------------------
+     * ==================================================
+     * USER ACTION
+     * REQUEST PAYMENT DETAILS
+     * ==================================================
      *
-     * This action does NOT need requestId.
-     * The authenticated user's ID is used instead.
+     * This must NOT require admin access.
      */
 
-    if (action === "request_payment_details") {
+    if (
+      action ===
+      "request_payment_details"
+    ) {
+      const {
+        user,
+        error: authError,
+      } = await getAuthenticatedUser(
+        request
+      );
+
+      if (!user) {
+        return NextResponse.json(
+          {
+            error:
+              authError ||
+              "You must be logged in.",
+          },
+          { status: 401 }
+        );
+      }
+
       if (
         packageType !== "standard" &&
         packageType !== "premium"
@@ -178,31 +276,69 @@ export async function POST(request: NextRequest) {
           ? 3000
           : 5000;
 
-      const now =
-        new Date().toISOString();
-
       const message =
         `Payment details requested for ${packageName} package. ` +
         `Activation fee: ₦${fee.toLocaleString()}.`;
 
-      const { data, error } =
-        await supabaseAdmin
-          .from("activation_requests")
-          .insert({
-            user_id: user.id,
-            message,
-            status:
-              "payment_details_requested",
-            payment_reference: null,
-            payment_note: null,
-            admin_reply: null,
-            created_at: now,
-            updated_at: now,
-          })
-          .select(
-            "id, user_id, message, status, created_at"
-          )
-          .single();
+      /*
+       * IMPORTANT:
+       *
+       * Use the user's authenticated Supabase client.
+       * This allows the RLS policy:
+       *
+       * user_id = auth.uid()
+       */
+
+      const authorization =
+        request.headers.get(
+          "authorization"
+        );
+
+      const token =
+        authorization!
+          .replace("Bearer ", "")
+          .trim();
+
+      const supabaseUser =
+        createClient(
+          SUPABASE_URL,
+          SUPABASE_ANON_KEY,
+          {
+            auth: {
+              autoRefreshToken: false,
+              persistSession: false,
+            },
+            global: {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`,
+              },
+            },
+          }
+        );
+
+      const {
+        data,
+        error,
+      } = await supabaseUser
+        .from("activation_requests")
+        .insert({
+          user_id: user.id,
+          message,
+          status:
+            "payment_details_requested",
+          payment_reference: null,
+          payment_note: null,
+          admin_reply: null,
+          created_at:
+            new Date().toISOString(),
+          updated_at:
+            new Date().toISOString(),
+        })
+        .select(
+          "id, user_id, message, status, created_at"
+        )
+        .single();
 
       if (error) {
         console.error(
@@ -228,7 +364,29 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * All actions below require an existing requestId.
+     * ==================================================
+     * ALL ACTIONS BELOW THIS POINT ARE ADMIN ACTIONS
+     * ==================================================
+     */
+
+    const {
+      user,
+      error: authError,
+    } = await getAdminUser(request);
+
+    if (!user) {
+      return NextResponse.json(
+        {
+          error:
+            authError ||
+            "Admin access denied.",
+        },
+        { status: 403 }
+      );
+    }
+
+    /*
+     * Existing admin actions require requestId.
      */
 
     if (!requestId) {
@@ -242,12 +400,15 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * --------------------------------------------------
+     * ==================================================
      * ADMIN REPLY TO PAYMENT DETAILS REQUEST
-     * --------------------------------------------------
+     * ==================================================
      */
 
-    if (action === "reply_payment_details") {
+    if (
+      action ===
+      "reply_payment_details"
+    ) {
       if (
         typeof reply !== "string" ||
         !reply.trim()
@@ -272,7 +433,10 @@ export async function POST(request: NextRequest) {
         .eq("id", requestId)
         .single();
 
-      if (error || !existingRequest) {
+      if (
+        error ||
+        !existingRequest
+      ) {
         return NextResponse.json(
           {
             error:
@@ -285,22 +449,23 @@ export async function POST(request: NextRequest) {
       const now =
         new Date().toISOString();
 
-      const { error: updateError } =
-        await supabaseAdmin
-          .from("activation_requests")
-          .update({
-            admin_reply:
-              reply.trim(),
-            status:
-              existingRequest.status ===
-              "approved"
-                ? "approved"
-                : "payment_details_requested",
-            reviewed_by: user.id,
-            reviewed_at: now,
-            updated_at: now,
-          })
-          .eq("id", requestId);
+      const {
+        error: updateError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          admin_reply:
+            reply.trim(),
+          status:
+            "payment_details_requested",
+          reviewed_by: user.id,
+          reviewed_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          requestId
+        );
 
       if (updateError) {
         console.error(
@@ -325,9 +490,9 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * --------------------------------------------------
-     * EXISTING ACTIVATION APPROVAL
-     * --------------------------------------------------
+     * ==================================================
+     * ADMIN APPROVES NORMAL ACTIVATION
+     * ==================================================
      */
 
     const {
@@ -338,7 +503,10 @@ export async function POST(request: NextRequest) {
       .select(
         "id, user_id, message, status, payment_reference, payment_note"
       )
-      .eq("id", requestId)
+      .eq(
+        "id",
+        requestId
+      )
       .single();
 
     if (
@@ -449,7 +617,10 @@ export async function POST(request: NextRequest) {
         reviewed_at: now,
         updated_at: now,
       })
-      .eq("id", requestId);
+      .eq(
+        "id",
+        requestId
+      );
 
     if (updateError) {
       console.error(
