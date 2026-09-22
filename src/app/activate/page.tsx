@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type PackageType = "standard" | "premium";
@@ -24,20 +24,8 @@ export default function ActivatePage() {
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
 
-  const [paymentReference, setPaymentReference] =
-    useState("");
-
-  const [paymentNote, setPaymentNote] =
-    useState("");
-
   const [loading, setLoading] =
     useState(true);
-
-  const [submitting, setSubmitting] =
-    useState(false);
-
-  const [userEmail, setUserEmail] =
-    useState("");
 
   const [userName, setUserName] =
     useState("");
@@ -81,10 +69,6 @@ export default function ActivatePage() {
 
           return;
         }
-
-        setUserEmail(
-          user.email ?? ""
-        );
 
         const metadataName =
           user.user_metadata?.full_name ||
@@ -212,164 +196,6 @@ export default function ActivatePage() {
     }
   }
 
-  async function submitRequest(
-    e: FormEvent<HTMLFormElement>
-  ) {
-    e.preventDefault();
-
-    setMessage("");
-
-    if (!paymentReference.trim()) {
-      setMessage(
-        "Please enter your payment reference."
-      );
-
-      return;
-    }
-
-    setSubmitting(true);
-
-    try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        setMessage(
-          "Your login session could not be verified. Please login again."
-        );
-
-        return;
-      }
-
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
-        .from("user_profiles")
-        .select(
-          "is_activated, package"
-        )
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) {
-        console.error(
-          "Profile check error:",
-          profileError
-        );
-
-        setMessage(
-          "Unable to check your activation status."
-        );
-
-        return;
-      }
-
-      if (profile?.is_activated) {
-        setMessage(
-          "Your account is already activated."
-        );
-
-        return;
-      }
-
-      const {
-        data: existingRequest,
-        error: requestCheckError,
-      } = await supabase
-        .from("activation_requests")
-        .select(
-          "id, status"
-        )
-        .eq(
-          "user_id",
-          user.id
-        )
-        .in("status", [
-          "pending",
-          "submitted",
-          "under_review",
-        ])
-        .order(
-          "created_at",
-          {
-            ascending: false,
-          }
-        )
-        .limit(1)
-        .maybeSingle();
-
-      if (requestCheckError) {
-        console.error(
-          "Request check error:",
-          requestCheckError
-        );
-      }
-
-      if (existingRequest) {
-        setMessage(
-          "You already have an activation request waiting for review."
-        );
-
-        return;
-      }
-
-      const messageText =
-        `Activation request for ${selectedPackage.name} package. ` +
-        `Activation fee: ₦${selectedPackage.fee.toLocaleString()}. ` +
-        `Cycle: ₦${selectedPackage.cycle}. ` +
-        `Maximum daily earning: ₦${selectedPackage.daily.toLocaleString()}.`;
-
-      const {
-        error: insertError,
-      } = await supabase
-        .from("activation_requests")
-        .insert({
-          user_id: user.id,
-          message: messageText,
-          status: "pending",
-          payment_reference:
-            paymentReference.trim(),
-          payment_note:
-            paymentNote.trim() ||
-            null,
-        });
-
-      if (insertError) {
-        console.error(
-          "Activation request error:",
-          insertError
-        );
-
-        setMessage(
-          insertError.message
-        );
-
-        return;
-      }
-
-      setPaymentReference("");
-      setPaymentNote("");
-
-      setMessage(
-        "Activation request submitted successfully. Please wait for admin approval. ✅"
-      );
-    } catch (error) {
-      console.error(
-        "Activation submission error:",
-        error
-      );
-
-      setMessage(
-        "Something went wrong while submitting your request."
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
@@ -423,8 +249,8 @@ export default function ActivatePage() {
           </h2>
 
           <p className="mt-2 text-sm leading-6 text-slate-400">
-            Select a package and submit your
-            payment reference for admin review.
+            Select a package and request your
+            payment details from TapBumber Admin.
           </p>
 
           {/* PACKAGE SELECTION */}
@@ -553,8 +379,7 @@ export default function ActivatePage() {
                 requestPaymentDetails
               }
               disabled={
-                requestingDetails ||
-                submitting
+                requestingDetails
               }
               className="mt-4 w-full rounded-2xl border border-yellow-400 bg-yellow-400/15 px-4 py-3.5 font-black text-yellow-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -570,97 +395,24 @@ export default function ActivatePage() {
 
           </div>
 
-          {/* ACTIVATION FORM */}
+          {/* REQUEST STATUS / ADMIN MESSAGE */}
 
-          <form
-            onSubmit={submitRequest}
-            className="mt-5 space-y-4"
-          >
-
-            <div>
-
-              <label className="mb-1.5 block text-sm font-bold">
-                Payment Reference
-              </label>
-
-              <input
-                type="text"
-                value={
-                  paymentReference
-                }
-                onChange={(e) =>
-                  setPaymentReference(
-                    e.target.value
-                  )
-                }
-                placeholder="Enter your payment reference"
-                disabled={
-                  submitting
-                }
-                className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
-              />
-
+          {message && (
+            <div className="mt-5 whitespace-pre-line rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center text-sm leading-5 text-yellow-200">
+              {message}
             </div>
-
-            <div>
-
-              <label className="mb-1.5 block text-sm font-bold">
-                Payment Note
-
-                <span className="ml-2 text-xs font-normal text-slate-500">
-                  Optional
-                </span>
-
-              </label>
-
-              <textarea
-                value={
-                  paymentNote
-                }
-                onChange={(e) =>
-                  setPaymentNote(
-                    e.target.value
-                  )
-                }
-                placeholder="Add any payment details for the admin"
-                rows={4}
-                disabled={
-                  submitting
-                }
-                className="w-full resize-none rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
-              />
-
-            </div>
-
-            {message && (
-              <div className="whitespace-pre-line rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-3 text-center text-sm leading-5 text-yellow-200">
-                {message}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={
-                submitting
-              }
-              className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-5 py-4 font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.18)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {submitting
-                ? "SUBMITTING..."
-                : "SUBMIT ACTIVATION REQUEST 🚀"}
-            </button>
-
-          </form>
+          )}
 
           {/* IMPORTANT NOTICE */}
 
           <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
 
             <p className="text-xs leading-5 text-slate-400">
-              Your activation is not completed
-              automatically. An admin must review
-              your payment and approve the request
-              before earning is enabled.
+              After requesting payment details,
+              wait for TapBumber Admin to reply
+              inside your account. Do not make
+              your activation payment until you
+              receive the current payment details.
             </p>
 
           </div>
@@ -670,7 +422,3 @@ export default function ActivatePage() {
     </main>
   );
 }
-
-Only change made: removed the entire "USER ACCOUNT" section from the UI. The authentication still works normally because the page still verifies the logged-in user internally.
-
-Now commit → deploy → refresh "/activate". The admin email should no longer appear.
