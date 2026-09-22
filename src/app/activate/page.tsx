@@ -20,8 +20,6 @@ const PACKAGES = {
   },
 };
 
-const ADMIN_EMAIL = "tapbomba.ai@gmail.com";
-
 export default function ActivatePage() {
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
@@ -32,7 +30,9 @@ export default function ActivatePage() {
   const [paymentNote, setPaymentNote] =
     useState("");
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
+
   const [submitting, setSubmitting] =
     useState(false);
 
@@ -42,7 +42,8 @@ export default function ActivatePage() {
   const [userName, setUserName] =
     useState("");
 
-  const [message, setMessage] = useState("");
+  const [message, setMessage] =
+    useState("");
 
   const [requestingDetails, setRequestingDetails] =
     useState(false);
@@ -81,7 +82,9 @@ export default function ActivatePage() {
           return;
         }
 
-        setUserEmail(user.email ?? "");
+        setUserEmail(
+          user.email ?? ""
+        );
 
         const metadataName =
           user.user_metadata?.full_name ||
@@ -90,14 +93,16 @@ export default function ActivatePage() {
 
         setUserName(metadataName);
 
-        const { data: profile, error: profileError } =
-          await supabase
-            .from("user_profiles")
-            .select(
-              "is_activated, package, full_name"
-            )
-            .eq("id", user.id)
-            .maybeSingle();
+        const {
+          data: profile,
+          error: profileError,
+        } = await supabase
+          .from("user_profiles")
+          .select(
+            "is_activated, package, full_name"
+          )
+          .eq("id", user.id)
+          .maybeSingle();
 
         if (profileError) {
           console.error(
@@ -107,7 +112,9 @@ export default function ActivatePage() {
         }
 
         if (profile?.full_name) {
-          setUserName(profile.full_name);
+          setUserName(
+            profile.full_name
+          );
         }
 
         if (profile?.is_activated) {
@@ -138,39 +145,71 @@ export default function ActivatePage() {
     loadUser();
   }, []);
 
-  function requestPaymentDetails() {
+  async function requestPaymentDetails() {
     if (requestingDetails) return;
 
     setRequestingDetails(true);
     setMessage("");
 
-    const subject =
-      `TapBumber Payment Details Request - ${selectedPackage.name}`;
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    const body =
-      `Hello TapBumber Admin,%0D%0A%0D%0A` +
-      `I would like to request the current payment details for my TapBumber activation.%0D%0A%0D%0A` +
-      `Name: ${encodeURIComponent(
-        userName || "TapBumber User"
-      )}%0D%0A` +
-      `Email: ${encodeURIComponent(
-        userEmail || "Not available"
-      )}%0D%0A` +
-      `Package: ${selectedPackage.name}%0D%0A` +
-      `Activation Fee: ₦${selectedPackage.fee.toLocaleString()}%0D%0A%0D%0A` +
-      `Please send me the current account/payment details privately.%0D%0A%0D%0A` +
-      `Thank you.`;
+      if (!session) {
+        setMessage(
+          "Please login again before requesting payment details."
+        );
 
-    window.location.href =
-      `mailto:${ADMIN_EMAIL}?subject=${encodeURIComponent(
-        subject
-      )}&body=${body}`;
+        return;
+      }
 
-    setMessage(
-      "Your payment-details request is ready. Please tap SEND in your email app to send it to TapBumber Admin. 📩"
-    );
+      const response = await fetch(
+        "/api/admin/activation",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Authorization:
+              `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            action:
+              "request_payment_details",
+            packageType,
+            userId: session.user.id,
+          }),
+        }
+      );
 
-    setRequestingDetails(false);
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        setMessage(
+          result.error ||
+            "Unable to send your payment-details request."
+        );
+
+        return;
+      }
+
+      setMessage(
+        "✅ Request Sent\n\nYour payment-details request has been sent to TapBumber Admin. Please wait for the admin to reply. You will receive the payment details here in your TapBumber account."
+      );
+    } catch (error) {
+      console.error(
+        "Payment details request error:",
+        error
+      );
+
+      setMessage(
+        "Unable to send your request. Please try again."
+      );
+    } finally {
+      setRequestingDetails(false);
+    }
   }
 
   async function submitRequest(
@@ -184,6 +223,7 @@ export default function ActivatePage() {
       setMessage(
         "Please enter your payment reference."
       );
+
       return;
     }
 
@@ -203,14 +243,16 @@ export default function ActivatePage() {
         return;
       }
 
-      const { data: profile, error: profileError } =
-        await supabase
-          .from("user_profiles")
-          .select(
-            "is_activated, package"
-          )
-          .eq("id", user.id)
-          .maybeSingle();
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("user_profiles")
+        .select(
+          "is_activated, package"
+        )
+        .eq("id", user.id)
+        .maybeSingle();
 
       if (profileError) {
         console.error(
@@ -241,15 +283,21 @@ export default function ActivatePage() {
         .select(
           "id, status"
         )
-        .eq("user_id", user.id)
+        .eq(
+          "user_id",
+          user.id
+        )
         .in("status", [
           "pending",
           "submitted",
           "under_review",
         ])
-        .order("created_at", {
-          ascending: false,
-        })
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        )
         .limit(1)
         .maybeSingle();
 
@@ -274,18 +322,20 @@ export default function ActivatePage() {
         `Cycle: ₦${selectedPackage.cycle}. ` +
         `Maximum daily earning: ₦${selectedPackage.daily.toLocaleString()}.`;
 
-      const { error: insertError } =
-        await supabase
-          .from("activation_requests")
-          .insert({
-            user_id: user.id,
-            message: messageText,
-            status: "pending",
-            payment_reference:
-              paymentReference.trim(),
-            payment_note:
-              paymentNote.trim() || null,
-          });
+      const {
+        error: insertError,
+      } = await supabase
+        .from("activation_requests")
+        .insert({
+          user_id: user.id,
+          message: messageText,
+          status: "pending",
+          payment_reference:
+            paymentReference.trim(),
+          payment_note:
+            paymentNote.trim() ||
+            null,
+        });
 
       if (insertError) {
         console.error(
@@ -324,6 +374,7 @@ export default function ActivatePage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
         <div className="text-center">
+
           <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-white/10 border-t-yellow-400" />
 
           <h1 className="text-2xl font-black">
@@ -336,6 +387,7 @@ export default function ActivatePage() {
           <p className="mt-2 text-sm text-slate-400">
             Checking your account...
           </p>
+
         </div>
       </main>
     );
@@ -346,6 +398,7 @@ export default function ActivatePage() {
       <div className="mx-auto max-w-md">
 
         <div className="mb-6 text-center">
+
           <h1 className="text-3xl font-black">
             TAP
             <span className="text-yellow-400">
@@ -356,6 +409,7 @@ export default function ActivatePage() {
           <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.25em] text-blue-200">
             Tap • Earn • Grow
           </p>
+
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
@@ -376,6 +430,7 @@ export default function ActivatePage() {
           {/* PACKAGE SELECTION */}
 
           <div className="mt-5 grid grid-cols-2 gap-3">
+
             {(
               Object.entries(
                 PACKAGES
@@ -385,6 +440,7 @@ export default function ActivatePage() {
               ][]
             ).map(
               ([key, pkg]) => {
+
                 const selected =
                   packageType === key;
 
@@ -401,6 +457,7 @@ export default function ActivatePage() {
                         : "border-white/10 bg-white/5"
                     }`}
                   >
+
                     <p
                       className={`text-xs font-black ${
                         selected
@@ -425,16 +482,20 @@ export default function ActivatePage() {
                       {pkg.daily.toLocaleString()}
                       /day
                     </p>
+
                   </button>
                 );
               }
             )}
+
           </div>
 
           {/* SELECTED PACKAGE */}
 
           <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+
             <div className="flex items-center justify-between">
+
               <span className="text-sm text-slate-300">
                 Selected package
               </span>
@@ -442,9 +503,11 @@ export default function ActivatePage() {
               <span className="font-black text-yellow-400">
                 {selectedPackage.name}
               </span>
+
             </div>
 
             <div className="mt-3 flex items-center justify-between">
+
               <span className="text-sm text-slate-300">
                 Activation fee
               </span>
@@ -453,13 +516,16 @@ export default function ActivatePage() {
                 ₦
                 {selectedPackage.fee.toLocaleString()}
               </span>
+
             </div>
+
           </div>
 
           {/* USER ACCOUNT */}
 
           {userEmail && (
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+
               <p className="text-xs text-slate-500">
                 Account
               </p>
@@ -467,6 +533,7 @@ export default function ActivatePage() {
               <p className="mt-1 break-all text-sm font-bold">
                 {userEmail}
               </p>
+
             </div>
           )}
 
@@ -475,26 +542,32 @@ export default function ActivatePage() {
           <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4">
 
             <div className="flex items-start gap-3">
+
               <div className="text-2xl">
                 💳
               </div>
 
               <div>
+
                 <h3 className="font-black text-yellow-300">
                   Need payment details?
                 </h3>
 
                 <p className="mt-1 text-sm leading-5 text-slate-300">
-                  Contact TapBumber Admin to receive
-                  the current payment account details
+                  Request the current payment account
+                  details directly from TapBumber Admin
                   before making your activation payment.
                 </p>
+
               </div>
+
             </div>
 
             <button
               type="button"
-              onClick={requestPaymentDetails}
+              onClick={
+                requestPaymentDetails
+              }
               disabled={
                 requestingDetails ||
                 submitting
@@ -502,15 +575,15 @@ export default function ActivatePage() {
               className="mt-4 w-full rounded-2xl border border-yellow-400 bg-yellow-400/15 px-4 py-3.5 font-black text-yellow-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {requestingDetails
-                ? "OPENING EMAIL..."
+                ? "SENDING REQUEST..."
                 : "📩 REQUEST PAYMENT DETAILS"}
             </button>
 
             <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
-              Your request will be prepared for
-              TapBumber Admin at{" "}
-              {ADMIN_EMAIL}
+              Your request will be sent directly
+              to TapBumber Admin inside the app.
             </p>
+
           </div>
 
           {/* ACTIVATION FORM */}
@@ -519,35 +592,47 @@ export default function ActivatePage() {
             onSubmit={submitRequest}
             className="mt-5 space-y-4"
           >
+
             <div>
+
               <label className="mb-1.5 block text-sm font-bold">
                 Payment Reference
               </label>
 
               <input
                 type="text"
-                value={paymentReference}
+                value={
+                  paymentReference
+                }
                 onChange={(e) =>
                   setPaymentReference(
                     e.target.value
                   )
                 }
                 placeholder="Enter your payment reference"
-                disabled={submitting}
+                disabled={
+                  submitting
+                }
                 className="w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
               />
+
             </div>
 
             <div>
+
               <label className="mb-1.5 block text-sm font-bold">
                 Payment Note
+
                 <span className="ml-2 text-xs font-normal text-slate-500">
                   Optional
                 </span>
+
               </label>
 
               <textarea
-                value={paymentNote}
+                value={
+                  paymentNote
+                }
                 onChange={(e) =>
                   setPaymentNote(
                     e.target.value
@@ -555,37 +640,45 @@ export default function ActivatePage() {
                 }
                 placeholder="Add any payment details for the admin"
                 rows={4}
-                disabled={submitting}
+                disabled={
+                  submitting
+                }
                 className="w-full resize-none rounded-2xl border border-white/10 bg-white/10 px-4 py-3.5 text-white outline-none placeholder:text-slate-500 focus:border-yellow-400 disabled:opacity-60"
               />
+
             </div>
 
             {message && (
-              <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-3 text-center text-sm leading-5 text-yellow-200">
+              <div className="whitespace-pre-line rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-3 text-center text-sm leading-5 text-yellow-200">
                 {message}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={
+                submitting
+              }
               className="w-full rounded-2xl bg-gradient-to-r from-yellow-300 via-yellow-400 to-amber-500 px-5 py-4 font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.18)] transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting
                 ? "SUBMITTING..."
                 : "SUBMIT ACTIVATION REQUEST 🚀"}
             </button>
+
           </form>
 
           {/* IMPORTANT NOTICE */}
 
           <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+
             <p className="text-xs leading-5 text-slate-400">
               Your activation is not completed
               automatically. An admin must review
               your payment and approve the request
               before earning is enabled.
             </p>
+
           </div>
 
         </div>
