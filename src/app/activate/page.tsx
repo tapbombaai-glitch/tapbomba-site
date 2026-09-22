@@ -521,22 +521,6 @@ export default function ActivatePage() {
 
           </div>
 
-          {/* USER ACCOUNT */}
-
-          {userEmail && (
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
-
-              <p className="text-xs text-slate-500">
-                Account
-              </p>
-
-              <p className="mt-1 break-all text-sm font-bold">
-                {userEmail}
-              </p>
-
-            </div>
-          )}
-
           {/* REQUEST PAYMENT DETAILS */}
 
           <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4">
@@ -686,3 +670,7 @@ export default function ActivatePage() {
     </main>
   );
 }
+
+Only change made: removed the entire "USER ACCOUNT" section from the UI. The authentication still works normally because the page still verifies the logged-in user internally.
+
+Now commit → deploy → refresh "/activate". The admin email should no longer appear.
