@@ -110,10 +110,25 @@ async function getProfile(userId: string) {
     await supabaseAdmin
       .from("user_profiles")
       .select(
-        "id, is_activated, package, balance, total_earned"
+        "id, email, is_activated, package, balance, total_earned"
       )
       .eq("id", userId)
-      .single();
+      .maybeSingle();
+
+  console.log("DAILY TAP PROFILE CHECK:", {
+    userId,
+    profileFound: !!profile,
+    profileId: profile?.id ?? null,
+    profileEmail: profile?.email ?? null,
+    profileError: profileError
+      ? {
+          code: profileError.code,
+          message: profileError.message,
+          details: profileError.details,
+          hint: profileError.hint,
+        }
+      : null,
+  });
 
   return {
     profile,
