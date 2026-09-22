@@ -20,6 +20,8 @@ const PACKAGES = {
   },
 };
 
+const ADMIN_EMAIL = "tapbomba.ai@gmail.com";
+
 export default function ActivatePage() {
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
@@ -37,7 +39,13 @@ export default function ActivatePage() {
   const [userEmail, setUserEmail] =
     useState("");
 
+  const [userName, setUserName] =
+    useState("");
+
   const [message, setMessage] = useState("");
+
+  const [requestingDetails, setRequestingDetails] =
+    useState(false);
 
   const selectedPackage =
     PACKAGES[packageType];
@@ -75,11 +83,18 @@ export default function ActivatePage() {
 
         setUserEmail(user.email ?? "");
 
+        const metadataName =
+          user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          "";
+
+        setUserName(metadataName);
+
         const { data: profile, error: profileError } =
           await supabase
             .from("user_profiles")
             .select(
-              "is_activated, package"
+              "is_activated, package, full_name"
             )
             .eq("id", user.id)
             .maybeSingle();
@@ -89,6 +104,10 @@ export default function ActivatePage() {
             "Profile lookup error:",
             profileError
           );
+        }
+
+        if (profile?.full_name) {
+          setUserName(profile.full_name);
         }
 
         if (profile?.is_activated) {
@@ -118,6 +137,41 @@ export default function ActivatePage() {
 
     loadUser();
   }, []);
+
+  function requestPaymentDetails() {
+    if (requestingDetails) return;
+
+    setRequestingDetails(true);
+    setMessage("");
+
+    const subject =
+      `TapBumber Payment Details Request - ${selectedPackage.name}`;
+
+    const body =
+      `Hello TapBumber Admin,%0D%0A%0D%0A` +
+      `I would like to request the current payment details for my TapBumber activation.%0D%0A%0D%0A` +
+      `Name: ${encodeURIComponent(
+        userName || "TapBumber User"
+      )}%0D%0A` +
+      `Email: ${encodeURIComponent(
+        userEmail || "Not available"
+      )}%0D%0A` +
+      `Package: ${selectedPackage.name}%0D%0A` +
+      `Activation Fee: ₦${selectedPackage.fee.toLocaleString()}%0D%0A%0D%0A` +
+      `Please send me the current account/payment details privately.%0D%0A%0D%0A` +
+      `Thank you.`;
+
+    window.location.href =
+      `mailto:${ADMIN_EMAIL}?subject=${encodeURIComponent(
+        subject
+      )}&body=${body}`;
+
+    setMessage(
+      "Your payment-details request is ready. Please tap SEND in your email app to send it to TapBumber Admin. 📩"
+    );
+
+    setRequestingDetails(false);
+  }
 
   async function submitRequest(
     e: FormEvent<HTMLFormElement>
@@ -179,23 +233,25 @@ export default function ActivatePage() {
         return;
       }
 
-      const { data: existingRequest, error: requestCheckError } =
-        await supabase
-          .from("activation_requests")
-          .select(
-            "id, status"
-          )
-          .eq("user_id", user.id)
-          .in("status", [
-            "pending",
-            "submitted",
-            "under_review",
-          ])
-          .order("created_at", {
-            ascending: false,
-          })
-          .limit(1)
-          .maybeSingle();
+      const {
+        data: existingRequest,
+        error: requestCheckError,
+      } = await supabase
+        .from("activation_requests")
+        .select(
+          "id, status"
+        )
+        .eq("user_id", user.id)
+        .in("status", [
+          "pending",
+          "submitted",
+          "under_review",
+        ])
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(1)
+        .maybeSingle();
 
       if (requestCheckError) {
         console.error(
@@ -288,6 +344,7 @@ export default function ActivatePage() {
   return (
     <main className="min-h-screen bg-[#030712] px-4 py-6 text-white">
       <div className="mx-auto max-w-md">
+
         <div className="mb-6 text-center">
           <h1 className="text-3xl font-black">
             TAP
@@ -302,6 +359,7 @@ export default function ActivatePage() {
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
+
           <p className="text-sm font-black text-yellow-300">
             ACTIVATION
           </p>
@@ -314,6 +372,8 @@ export default function ActivatePage() {
             Select a package and submit your
             payment reference for admin review.
           </p>
+
+          {/* PACKAGE SELECTION */}
 
           <div className="mt-5 grid grid-cols-2 gap-3">
             {(
@@ -371,6 +431,8 @@ export default function ActivatePage() {
             )}
           </div>
 
+          {/* SELECTED PACKAGE */}
+
           <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-300">
@@ -394,6 +456,8 @@ export default function ActivatePage() {
             </div>
           </div>
 
+          {/* USER ACCOUNT */}
+
           {userEmail && (
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
               <p className="text-xs text-slate-500">
@@ -405,6 +469,51 @@ export default function ActivatePage() {
               </p>
             </div>
           )}
+
+          {/* REQUEST PAYMENT DETAILS */}
+
+          <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4">
+
+            <div className="flex items-start gap-3">
+              <div className="text-2xl">
+                💳
+              </div>
+
+              <div>
+                <h3 className="font-black text-yellow-300">
+                  Need payment details?
+                </h3>
+
+                <p className="mt-1 text-sm leading-5 text-slate-300">
+                  Contact TapBumber Admin to receive
+                  the current payment account details
+                  before making your activation payment.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={requestPaymentDetails}
+              disabled={
+                requestingDetails ||
+                submitting
+              }
+              className="mt-4 w-full rounded-2xl border border-yellow-400 bg-yellow-400/15 px-4 py-3.5 font-black text-yellow-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {requestingDetails
+                ? "OPENING EMAIL..."
+                : "📩 REQUEST PAYMENT DETAILS"}
+            </button>
+
+            <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
+              Your request will be prepared for
+              TapBumber Admin at{" "}
+              {ADMIN_EMAIL}
+            </p>
+          </div>
+
+          {/* ACTIVATION FORM */}
 
           <form
             onSubmit={submitRequest}
@@ -468,6 +577,8 @@ export default function ActivatePage() {
             </button>
           </form>
 
+          {/* IMPORTANT NOTICE */}
+
           <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
             <p className="text-xs leading-5 text-slate-400">
               Your activation is not completed
@@ -476,6 +587,7 @@ export default function ActivatePage() {
               before earning is enabled.
             </p>
           </div>
+
         </div>
       </div>
     </main>
