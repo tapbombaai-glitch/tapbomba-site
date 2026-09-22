@@ -60,7 +60,8 @@ async function getAdminUser(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const { user, error: authError } = await getAdminUser(request);
+    const { user, error: authError } =
+      await getAdminUser(request);
 
     if (!user) {
       return NextResponse.json(
@@ -72,13 +73,23 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabaseAdmin
       .from("activation_requests")
       .select(
-        "id, user_id, message, status, payment_reference, payment_note, admin_reply, created_at"
+        "id, user_id, message, status, payment_reference, payment_note, admin_reply, created_at, updated_at"
       )
-      .in("status", ["pending", "submitted", "under_review"])
-      .order("created_at", { ascending: false });
+      .in("status", [
+        "pending",
+        "submitted",
+        "under_review",
+        "payment_details_requested",
+      ])
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (error) {
-      console.error("Load activation requests error:", error);
+      console.error(
+        "Load activation requests error:",
+        error
+      );
 
       return NextResponse.json(
         { error: error.message },
@@ -93,7 +104,10 @@ export async function GET(request: NextRequest) {
     console.error("Admin GET error:", error);
 
     return NextResponse.json(
-      { error: "Unable to load activation requests." },
+      {
+        error:
+          "Unable to load activation requests.",
+      },
       { status: 500 }
     );
   }
@@ -101,24 +115,121 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { user, error: authError } = await getAdminUser(request);
+    const { user, error: authError } =
+      await getAdminUser(request);
 
     if (!user) {
       return NextResponse.json(
-        { error: authError || "Admin access denied." },
+        {
+          error:
+            authError ||
+            "Admin access denied.",
+        },
         { status: 403 }
       );
     }
 
     const body = await request.json();
+
     const requestId = body?.requestId;
+    const action = body?.action;
+    const reply = body?.reply;
 
     if (!requestId) {
       return NextResponse.json(
-        { error: "Activation request ID is required." },
+        {
+          error:
+            "Activation request ID is required.",
+        },
         { status: 400 }
       );
     }
+
+    /*
+     * --------------------------------------------------
+     * ADMIN REPLY TO PAYMENT DETAILS REQUEST
+     * --------------------------------------------------
+     */
+
+    if (action === "reply_payment_details") {
+      if (
+        typeof reply !== "string" ||
+        !reply.trim()
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Please enter the payment details.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const { data: existingRequest, error } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .select(
+            "id, user_id, status"
+          )
+          .eq("id", requestId)
+          .single();
+
+      if (error || !existingRequest) {
+        return NextResponse.json(
+          {
+            error:
+              "Payment-details request not found.",
+          },
+          { status: 404 }
+        );
+      }
+
+      const now =
+        new Date().toISOString();
+
+      const { error: updateError } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .update({
+            admin_reply: reply.trim(),
+            status:
+              existingRequest.status ===
+              "approved"
+                ? "approved"
+                : "payment_details_requested",
+            reviewed_by: user.id,
+            reviewed_at: now,
+            updated_at: now,
+          })
+          .eq("id", requestId);
+
+      if (updateError) {
+        console.error(
+          "Payment details reply error:",
+          updateError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              updateError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        message:
+          "Payment details sent to the user successfully.",
+      });
+    }
+
+    /*
+     * --------------------------------------------------
+     * EXISTING ACTIVATION APPROVAL
+     * --------------------------------------------------
+     */
 
     const {
       data: activationRequest,
@@ -132,24 +243,37 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (requestError || !activationRequest) {
-      console.error("Request lookup error:", requestError);
+      console.error(
+        "Request lookup error:",
+        requestError
+      );
 
       return NextResponse.json(
-        { error: "Activation request not found." },
+        {
+          error:
+            "Activation request not found.",
+        },
         { status: 404 }
       );
     }
 
-    if (activationRequest.status === "approved") {
+    if (
+      activationRequest.status ===
+      "approved"
+    ) {
       return NextResponse.json(
-        { error: "This activation request is already approved." },
+        {
+          error:
+            "This activation request is already approved.",
+        },
         { status: 400 }
       );
     }
 
-    const packageMatch = activationRequest.message?.match(
-      /Activation request for (STANDARD|PREMIUM) package/i
-    );
+    const packageMatch =
+      activationRequest.message?.match(
+        /Activation request for (STANDARD|PREMIUM) package/i
+      );
 
     if (!packageMatch) {
       return NextResponse.json(
@@ -161,29 +285,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const packageName = packageMatch[1].toLowerCase();
+    const packageName =
+      packageMatch[1].toLowerCase();
 
-    if (packageName !== "standard" && packageName !== "premium") {
+    if (
+      packageName !== "standard" &&
+      packageName !== "premium"
+    ) {
       return NextResponse.json(
-        { error: "Invalid package." },
+        {
+          error:
+            "Invalid package.",
+        },
         { status: 400 }
       );
     }
 
-    const now = new Date().toISOString();
+    const now =
+      new Date().toISOString();
 
-    const { error: profileError } = await supabaseAdmin
-      .from("user_profiles")
-      .update({
-        is_activated: true,
-        package: packageName,
-        activated_at: now,
-        updated_at: now,
-      })
-      .eq("id", activationRequest.user_id);
+    const { error: profileError } =
+      await supabaseAdmin
+        .from("user_profiles")
+        .update({
+          is_activated: true,
+          package: packageName,
+          activated_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          activationRequest.user_id
+        );
 
     if (profileError) {
-      console.error("User profile activation error:", profileError);
+      console.error(
+        "User profile activation error:",
+        profileError
+      );
 
       return NextResponse.json(
         {
@@ -195,19 +334,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { error: updateError } = await supabaseAdmin
-      .from("activation_requests")
-      .update({
-        status: "approved",
-        admin_reply: `Activation approved for ${packageName.toUpperCase()} package.`,
-        reviewed_by: user.id,
-        reviewed_at: now,
-        updated_at: now,
-      })
-      .eq("id", requestId);
+    const { error: updateError } =
+      await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          status: "approved",
+          admin_reply:
+            `Activation approved for ${packageName.toUpperCase()} package.`,
+          reviewed_by: user.id,
+          reviewed_at: now,
+          updated_at: now,
+        })
+        .eq("id", requestId);
 
     if (updateError) {
-      console.error("Activation request update error:", updateError);
+      console.error(
+        "Activation request update error:",
+        updateError
+      );
 
       return NextResponse.json(
         {
@@ -221,14 +365,21 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "User activated successfully.",
+      message:
+        "User activated successfully.",
       package: packageName,
     });
   } catch (error) {
-    console.error("Admin POST error:", error);
+    console.error(
+      "Admin POST error:",
+      error
+    );
 
     return NextResponse.json(
-      { error: "Unable to process activation." },
+      {
+        error:
+          "Unable to process admin request.",
+      },
       { status: 500 }
     );
   }
