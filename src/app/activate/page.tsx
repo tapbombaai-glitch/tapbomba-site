@@ -405,10 +405,10 @@ export default function ActivatePage() {
 
     try {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (!user) {
+      if (!session) {
         setMessage(
           "Please login again before submitting your payment."
         );
@@ -420,6 +420,7 @@ export default function ActivatePage() {
        * Upload payment screenshot to the
        * private Supabase Storage bucket.
        */
+
       const fileExtension =
         paymentScreenshot.name
           .split(".")
@@ -427,7 +428,7 @@ export default function ActivatePage() {
           ?.toLowerCase() || "jpg";
 
       const filePath =
-        `${user.id}/${existingRequest.id}-${Date.now()}.${fileExtension}`;
+        `${session.user.id}/${existingRequest.id}-${Date.now()}.${fileExtension}`;
 
       const {
         error: uploadError,
@@ -458,60 +459,73 @@ export default function ActivatePage() {
       }
 
       /*
-       * Save the private storage path,
-       * payment reference and note.
+       * Send the uploaded proof through
+       * the same backend API pattern used
+       * by the Request Payment Details button.
        */
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("activation_requests")
-        .update({
-          payment_reference:
-            paymentReference.trim() ||
-            null,
 
-          payment_note:
-            paymentNote.trim() ||
-            null,
+      const response = await fetch(
+        "/api/admin/activation",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+            Authorization:
+              `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            action:
+              "submit_payment_proof",
 
-          payment_proof_url:
-            filePath,
+            requestId:
+              existingRequest.id,
 
-          payment_submitted_at:
-            new Date().toISOString(),
+            paymentProofUrl:
+              filePath,
 
-          status: "submitted",
-        })
-        .eq(
-          "id",
-          existingRequest.id
-        )
-        .eq(
-          "user_id",
-          user.id
-        )
-        .select(
-          "id, user_id, message, status, admin_reply, payment_reference, payment_note, payment_proof_url, payment_submitted_at, rejection_reason, created_at"
-        )
-        .single();
+            paymentReference:
+              paymentReference.trim() ||
+              null,
 
-      if (error) {
+            paymentNote:
+              paymentNote.trim() ||
+              null,
+          }),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
         console.error(
-          "Payment submission error:",
-          error
+          "Payment proof API error:",
+          result
         );
 
         setMessage(
-          "Your screenshot was uploaded, but the payment submission could not be completed. Please contact TapBumber Admin."
+          result.error ||
+            "Your payment proof could not be submitted. Please try again."
         );
 
         return;
       }
 
-      setExistingRequest(
-        data as ActivationRequest
-      );
+      /*
+       * Update the local screen with the
+       * request returned by the backend.
+       */
+
+      if (result.request) {
+        setExistingRequest(
+          result.request as ActivationRequest
+        );
+      } else {
+        await loadExistingRequest(
+          session.user.id
+        );
+      }
 
       setPaymentScreenshot(null);
 
