@@ -15,7 +15,7 @@ const SUPABASE_SERVICE_ROLE_KEY =
 /*
  * --------------------------------------------------
  * SERVICE-ROLE CLIENT
- * Used only for admin operations.
+ * Used only for secure admin operations.
  * --------------------------------------------------
  */
 
@@ -33,7 +33,6 @@ const supabaseAdmin = createClient(
 /*
  * --------------------------------------------------
  * GET AUTHENTICATED USER
- * Used for normal logged-in users.
  * --------------------------------------------------
  */
 
@@ -100,7 +99,6 @@ async function getAuthenticatedUser(
 /*
  * --------------------------------------------------
  * GET ADMIN USER
- * Used only for admin operations.
  * --------------------------------------------------
  */
 
@@ -160,7 +158,7 @@ export async function GET(
     } = await supabaseAdmin
       .from("activation_requests")
       .select(
-        "id, user_id, message, status, payment_reference, payment_note, admin_reply, created_at, updated_at"
+        "id, user_id, message, status, payment_reference, payment_note, payment_proof_url, payment_submitted_at, rejection_reason, admin_reply, created_at, updated_at"
       )
       .in("status", [
         "pending",
@@ -221,14 +219,14 @@ export async function POST(
     const requestId = body?.requestId;
     const reply = body?.reply;
     const packageType = body?.packageType;
+    const rejectionReason =
+      body?.rejectionReason;
 
     /*
      * ==================================================
      * USER ACTION
      * REQUEST PAYMENT DETAILS
      * ==================================================
-     *
-     * This must NOT require admin access.
      */
 
     if (
@@ -266,6 +264,47 @@ export async function POST(
         );
       }
 
+      /*
+       * Prevent creating another active request.
+       */
+
+      const {
+        data: existingRequest,
+        error: existingError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .select("id, status")
+        .eq("user_id", user.id)
+        .in("status", [
+          "pending",
+          "submitted",
+          "under_review",
+          "payment_details_requested",
+        ])
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingError) {
+        console.error(
+          "Existing activation request lookup error:",
+          existingError
+        );
+      }
+
+      if (existingRequest) {
+        return NextResponse.json(
+          {
+            error:
+              "You already have an active activation request.",
+            request: existingRequest,
+          },
+          { status: 409 }
+        );
+      }
+
       const packageName =
         packageType === "standard"
           ? "STANDARD"
@@ -280,22 +319,27 @@ export async function POST(
         `Payment details requested for ${packageName} package. ` +
         `Activation fee: ₦${fee.toLocaleString()}.`;
 
-      /*
-       * IMPORTANT:
-       *
-       * Use the user's authenticated Supabase client.
-       * This allows the RLS policy:
-       *
-       * user_id = auth.uid()
-       */
-
       const authorization =
         request.headers.get(
           "authorization"
         );
 
+      if (
+        !authorization?.startsWith(
+          "Bearer "
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Missing authorization token.",
+          },
+          { status: 401 }
+        );
+      }
+
       const token =
-        authorization!
+        authorization
           .replace("Bearer ", "")
           .trim();
 
@@ -385,10 +429,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Existing admin actions require requestId.
-     */
-
     if (!requestId) {
       return NextResponse.json(
         {
@@ -401,7 +441,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * ADMIN REPLY TO PAYMENT DETAILS REQUEST
+     * ADMIN SENDS PAYMENT DETAILS
      * ==================================================
      */
 
@@ -491,7 +531,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * ADMIN APPROVES NORMAL ACTIVATION
+     * LOAD REQUEST FOR APPROVE / REJECT
      * ==================================================
      */
 
@@ -501,12 +541,9 @@ export async function POST(
     } = await supabaseAdmin
       .from("activation_requests")
       .select(
-        "id, user_id, message, status, payment_reference, payment_note"
+        "id, user_id, message, status, payment_reference, payment_note, payment_proof_url, payment_submitted_at, rejection_reason, admin_reply"
       )
-      .eq(
-        "id",
-        requestId
-      )
+      .eq("id", requestId)
       .single();
 
     if (
@@ -527,123 +564,243 @@ export async function POST(
       );
     }
 
-    if (
-      activationRequest.status ===
-      "approved"
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "This activation request is already approved.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const packageMatch =
-      activationRequest.message?.match(
-        /Activation request for (STANDARD|PREMIUM) package/i
-      );
-
-    if (!packageMatch) {
-      return NextResponse.json(
-        {
-          error:
-            "Could not determine whether this is a Standard or Premium activation request.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const packageName =
-      packageMatch[1].toLowerCase();
+    /*
+     * ==================================================
+     * ADMIN REJECTS PAYMENT
+     * ==================================================
+     */
 
     if (
-      packageName !== "standard" &&
-      packageName !== "premium"
+      action ===
+      "reject_payment"
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Invalid package.",
-        },
-        { status: 400 }
-      );
+      if (
+        activationRequest.status !==
+          "submitted" &&
+        activationRequest.status !==
+          "under_review"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Only submitted payment proofs can be rejected.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const reason =
+        typeof rejectionReason ===
+          "string" &&
+        rejectionReason.trim()
+          ? rejectionReason.trim()
+          : "Payment proof could not be verified.";
+
+      const now =
+        new Date().toISOString();
+
+      const {
+        error: rejectError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          status: "rejected",
+          rejection_reason: reason,
+          admin_reply: reason,
+          reviewed_by: user.id,
+          reviewed_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          requestId
+        );
+
+      if (rejectError) {
+        console.error(
+          "Payment rejection error:",
+          rejectError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              rejectError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        message:
+          "Payment proof rejected.",
+      });
     }
 
-    const now =
-      new Date().toISOString();
+    /*
+     * ==================================================
+     * ADMIN APPROVES PAYMENT
+     * ==================================================
+     */
 
-    const {
-      error: profileError,
-    } = await supabaseAdmin
-      .from("user_profiles")
-      .update({
-        is_activated: true,
+    if (
+      action ===
+      "approve_payment"
+    ) {
+      if (
+        activationRequest.status !==
+          "submitted" &&
+        activationRequest.status !==
+          "under_review"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Only submitted payment proofs can be approved.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !activationRequest.payment_proof_url
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "No payment proof was submitted for this request.",
+          },
+          { status: 400 }
+        );
+      }
+
+      /*
+       * Determine package from the current
+       * payment-details request message.
+       */
+
+      const packageMatch =
+        activationRequest.message?.match(
+          /(?:requested for|request for)\s+(STANDARD|PREMIUM)\s+package/i
+        );
+
+      if (!packageMatch) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not determine the selected package.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const packageName =
+        packageMatch[1].toLowerCase();
+
+      if (
+        packageName !== "standard" &&
+        packageName !== "premium"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid package.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const now =
+        new Date().toISOString();
+
+      /*
+       * Activate the user's profile.
+       */
+
+      const {
+        error: profileError,
+      } = await supabaseAdmin
+        .from("user_profiles")
+        .update({
+          is_activated: true,
+          package: packageName,
+          activated_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          activationRequest.user_id
+        );
+
+      if (profileError) {
+        console.error(
+          "User profile activation error:",
+          profileError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Could not activate the user's profile: " +
+              profileError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      /*
+       * Mark the activation request approved.
+       */
+
+      const {
+        error: updateError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          status: "approved",
+          admin_reply:
+            `Payment approved. ${packageName.toUpperCase()} package activated.`,
+          reviewed_by: user.id,
+          reviewed_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          requestId
+        );
+
+      if (updateError) {
+        console.error(
+          "Activation request update error:",
+          updateError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "User was activated, but the activation request could not be updated: " +
+              updateError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        message:
+          "Payment approved and user activated successfully.",
         package: packageName,
-        activated_at: now,
-        updated_at: now,
-      })
-      .eq(
-        "id",
-        activationRequest.user_id
-      );
-
-    if (profileError) {
-      console.error(
-        "User profile activation error:",
-        profileError
-      );
-
-      return NextResponse.json(
-        {
-          error:
-            "Could not activate the user's profile: " +
-            profileError.message,
-        },
-        { status: 500 }
-      );
+      });
     }
 
-    const {
-      error: updateError,
-    } = await supabaseAdmin
-      .from("activation_requests")
-      .update({
-        status: "approved",
-        admin_reply:
-          `Activation approved for ${packageName.toUpperCase()} package.`,
-        reviewed_by: user.id,
-        reviewed_at: now,
-        updated_at: now,
-      })
-      .eq(
-        "id",
-        requestId
-      );
-
-    if (updateError) {
-      console.error(
-        "Activation request update error:",
-        updateError
-      );
-
-      return NextResponse.json(
-        {
-          error:
-            "User was activated, but the activation request could not be updated: " +
-            updateError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      message:
-        "User activated successfully.",
-      package: packageName,
-    });
+    return NextResponse.json(
+      {
+        error:
+          "Unknown admin action.",
+      },
+      { status: 400 }
+    );
   } catch (error) {
     console.error(
       "Admin POST error:",
