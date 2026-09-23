@@ -54,6 +54,15 @@ export default function ActivatePage() {
   const [requestingDetails, setRequestingDetails] =
     useState(false);
 
+  const [submittingPayment, setSubmittingPayment] =
+    useState(false);
+
+  const [paymentReference, setPaymentReference] =
+    useState("");
+
+  const [paymentNote, setPaymentNote] =
+    useState("");
+
   const [existingRequest, setExistingRequest] =
     useState<ActivationRequest | null>(null);
 
@@ -117,9 +126,7 @@ export default function ActivatePage() {
         }
 
         if (profile?.full_name) {
-          setUserName(
-            profile.full_name
-          );
+          setUserName(profile.full_name);
         }
 
         if (profile?.is_activated) {
@@ -197,6 +204,18 @@ export default function ActivatePage() {
       } else if (/STANDARD/i.test(text)) {
         setPackageType("standard");
       }
+
+      if (request.payment_reference) {
+        setPaymentReference(
+          request.payment_reference
+        );
+      }
+
+      if (request.payment_note) {
+        setPaymentNote(
+          request.payment_note
+        );
+      }
     } catch (error) {
       console.error(
         "Load existing request error:",
@@ -211,6 +230,13 @@ export default function ActivatePage() {
       ACTIVE_STATUSES.includes(
         existingRequest.status || ""
       )
+    );
+  }
+
+  function paymentHasBeenSubmitted() {
+    return (
+      existingRequest?.status === "submitted" ||
+      existingRequest?.status === "under_review"
     );
   }
 
@@ -316,6 +342,122 @@ export default function ActivatePage() {
     }
   }
 
+  async function submitPayment() {
+    if (submittingPayment) return;
+
+    const reference =
+      paymentReference.trim();
+
+    if (!reference) {
+      setMessage(
+        "⚠️ Please enter your payment reference before submitting."
+      );
+
+      return;
+    }
+
+    if (!existingRequest) {
+      setMessage(
+        "No activation request was found. Please request payment details first."
+      );
+
+      return;
+    }
+
+    if (!existingRequest.admin_reply?.trim()) {
+      setMessage(
+        "⚠️ Please wait until TapBumber Admin sends your current payment details."
+      );
+
+      return;
+    }
+
+    if (
+      existingRequest.status !==
+      "payment_details_requested"
+    ) {
+      setMessage(
+        "Your payment has already been submitted for review."
+      );
+
+      return;
+    }
+
+    setSubmittingPayment(true);
+    setMessage("");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setMessage(
+          "Please login again before submitting your payment."
+        );
+
+        return;
+      }
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("activation_requests")
+        .update({
+          payment_reference:
+            reference,
+          payment_note:
+            paymentNote.trim() || null,
+          status: "submitted",
+        })
+        .eq(
+          "id",
+          existingRequest.id
+        )
+        .eq(
+          "user_id",
+          user.id
+        )
+        .select(
+          "id, user_id, message, status, admin_reply, payment_reference, payment_note, created_at"
+        )
+        .single();
+
+      if (error) {
+        console.error(
+          "Payment submission error:",
+          error
+        );
+
+        setMessage(
+          "Unable to submit your payment for review. Please try again."
+        );
+
+        return;
+      }
+
+      setExistingRequest(
+        data as ActivationRequest
+      );
+
+      setMessage(
+        "✅ Payment Submitted\n\nYour payment reference has been sent to TapBumber Admin for review. Your account will remain inactive until the payment is verified and approved."
+      );
+    } catch (error) {
+      console.error(
+        "Payment submission error:",
+        error
+      );
+
+      setMessage(
+        "Unable to submit your payment for review. Please try again."
+      );
+    } finally {
+      setSubmittingPayment(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
@@ -342,6 +484,9 @@ export default function ActivatePage() {
 
   const hasPaymentDetails =
     !!existingRequest?.admin_reply?.trim();
+
+  const paymentSubmitted =
+    paymentHasBeenSubmitted();
 
   return (
     <main className="min-h-screen bg-[#030712] px-4 py-6 text-white">
@@ -462,7 +607,9 @@ export default function ActivatePage() {
           {activeRequest && (
             <div className="mt-5 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-4">
               <p className="text-sm font-black text-blue-300">
-                {hasPaymentDetails
+                {paymentSubmitted
+                  ? "🔎 PAYMENT SUBMITTED FOR REVIEW"
+                  : hasPaymentDetails
                   ? "💳 PAYMENT DETAILS RECEIVED"
                   : "⏳ PAYMENT DETAILS REQUESTED"}
               </p>
@@ -493,6 +640,126 @@ export default function ActivatePage() {
                       {existingRequest?.admin_reply}
                     </p>
                   </div>
+
+                  {/* PAYMENT SUBMITTED */}
+
+                  {paymentSubmitted && (
+                    <div className="mt-4 rounded-xl border border-green-400/30 bg-green-400/10 p-4">
+                      <p className="text-sm font-black text-green-300">
+                        ✅ PAYMENT SUBMITTED
+                      </p>
+
+                      <p className="mt-2 text-sm leading-5 text-slate-300">
+                        Your payment reference has
+                        been received and is waiting
+                        for admin verification.
+                      </p>
+
+                      <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                          Payment Reference
+                        </p>
+
+                        <p className="mt-1 break-words text-sm font-bold text-white">
+                          {existingRequest.payment_reference}
+                        </p>
+                      </div>
+
+                      {existingRequest.payment_note && (
+                        <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                            Payment Note
+                          </p>
+
+                          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-300">
+                            {existingRequest.payment_note}
+                          </p>
+                        </div>
+                      )}
+
+                      <p className="mt-3 text-xs leading-5 text-yellow-200">
+                        Your account is still inactive.
+                        Activation happens only after
+                        TapBumber Admin verifies and
+                        approves your payment.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* PAYMENT SUBMISSION FORM */}
+
+                  {!paymentSubmitted && (
+                    <div className="mt-4 rounded-xl border border-yellow-400/30 bg-black/40 p-4">
+                      <p className="text-sm font-black text-yellow-300">
+                        💳 I HAVE MADE THE PAYMENT
+                      </p>
+
+                      <p className="mt-2 text-xs leading-5 text-slate-400">
+                        Only submit this after you have
+                        actually made the activation
+                        payment using the current
+                        payment details above.
+                      </p>
+
+                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                        Payment Reference *
+                      </label>
+
+                      <input
+                        type="text"
+                        value={
+                          paymentReference
+                        }
+                        onChange={(event) =>
+                          setPaymentReference(
+                            event.target.value
+                          )
+                        }
+                        placeholder="Enter transaction/reference ID"
+                        className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
+                      />
+
+                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                        Payment Note
+                        <span className="ml-1 normal-case text-slate-600">
+                          (optional)
+                        </span>
+                      </label>
+
+                      <textarea
+                        value={paymentNote}
+                        onChange={(event) =>
+                          setPaymentNote(
+                            event.target.value
+                          )
+                        }
+                        placeholder="Optional note for the admin"
+                        rows={3}
+                        className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={
+                          submitPayment
+                        }
+                        disabled={
+                          submittingPayment
+                        }
+                        className="mt-4 w-full rounded-2xl border border-green-400 bg-green-400/15 px-4 py-3.5 font-black text-green-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {submittingPayment
+                          ? "SUBMITTING PAYMENT..."
+                          : "✅ SUBMIT PAYMENT FOR REVIEW"}
+                      </button>
+
+                      <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
+                        A payment reference is required.
+                        Clicking the button alone will
+                        not activate your account.
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
             </div>
