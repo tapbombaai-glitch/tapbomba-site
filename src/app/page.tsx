@@ -2353,15 +2353,3 @@ export default function Home() {
     </main>
   );
 }
-
-Only functional change in this complete file: the Home activation condition is now:
-
-{earnState &&
-  (
-    !earnState.isActivated ||
-    earnState.status === "inactive"
-  ) && (
-
-So Boss, replace the whole "src/app/page.tsx" with the code above, save it, commit/push it, and let Vercel deploy.
-
-Then don't change anything else yet. Test the Home screen first. We want to confirm the 🔐 ACCOUNT ACTIVATION → ACTIVATE ACCOUNT card comes back before we move to the private payment-details flow.
