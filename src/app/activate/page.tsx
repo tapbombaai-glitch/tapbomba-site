@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type PackageType = "standard" | "premium";
@@ -44,12 +45,18 @@ const ACTIVE_STATUSES = [
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 export default function ActivatePage() {
+  const router = useRouter();
+
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
 
   const [loading, setLoading] = useState(true);
-  const [userName, setUserName] = useState("");
-  const [message, setMessage] = useState("");
+
+  const [userName, setUserName] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
 
   const [requestingDetails, setRequestingDetails] =
     useState(false);
@@ -69,9 +76,81 @@ export default function ActivatePage() {
   const [existingRequest, setExistingRequest] =
     useState<ActivationRequest | null>(null);
 
-  const selectedPackage = PACKAGES[packageType];
+  const selectedPackage =
+    PACKAGES[packageType];
+
+  /*
+   * --------------------------------------------------
+   * CHECK ACTIVATION STATUS
+   *
+   * IMPORTANT:
+   * If the user's profile says is_activated = true,
+   * immediately send them to /body.
+   * --------------------------------------------------
+   */
+
+  async function checkActivationStatus(
+    userId: string
+  ) {
+    try {
+      const {
+        data: profile,
+        error,
+      } = await supabase
+        .from("user_profiles")
+        .select(
+          "is_activated, package, full_name"
+        )
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "Activation status lookup error:",
+          error
+        );
+
+        return false;
+      }
+
+      /*
+       * THIS IS THE IMPORTANT PART.
+       *
+       * Only an activated profile is sent
+       * to the earning/body page.
+       */
+
+      if (profile?.is_activated === true) {
+        router.replace("/body");
+        return true;
+      }
+
+      if (profile?.full_name) {
+        setUserName(
+          profile.full_name
+        );
+      }
+
+      return false;
+    } catch (error) {
+      console.error(
+        "Activation status check error:",
+        error
+      );
+
+      return false;
+    }
+  }
+
+  /*
+   * --------------------------------------------------
+   * LOAD USER
+   * --------------------------------------------------
+   */
 
   useEffect(() => {
+    let mounted = true;
+
     async function loadUser() {
       setLoading(true);
 
@@ -81,8 +160,13 @@ export default function ActivatePage() {
           error,
         } = await supabase.auth.getUser();
 
+        if (!mounted) return;
+
         if (error) {
-          console.error("Unable to load user:", error);
+          console.error(
+            "Unable to load user:",
+            error
+          );
 
           setMessage(
             "Unable to verify your account. Please login again."
@@ -106,55 +190,116 @@ export default function ActivatePage() {
 
         setUserName(metadataName);
 
-        const {
-          data: profile,
-          error: profileError,
-        } = await supabase
-          .from("user_profiles")
-          .select(
-            "is_activated, package, full_name"
-          )
-          .eq("id", user.id)
-          .maybeSingle();
+        /*
+         * FIRST IMPORTANT CHECK
+         *
+         * If already activated, leave the
+         * activation page immediately.
+         */
 
-        if (profileError) {
-          console.error(
-            "Profile lookup error:",
-            profileError
+        const activated =
+          await checkActivationStatus(
+            user.id
           );
+
+        if (activated) {
+          return;
         }
 
-        if (profile?.full_name) {
-          setUserName(profile.full_name);
-        }
+        /*
+         * User is NOT activated.
+         * Continue loading activation request.
+         */
 
-        if (profile?.is_activated) {
-          setMessage(
-            `Your account is already activated on the ${
-              profile.package
-                ? String(profile.package).toUpperCase()
-                : "SELECTED"
-            } package.`
-          );
-        }
-
-        await loadExistingRequest(user.id);
+        await loadExistingRequest(
+          user.id
+        );
       } catch (error) {
         console.error(
           "Activation page error:",
           error
         );
 
-        setMessage(
-          "Something went wrong. Please try again."
-        );
+        if (mounted) {
+          setMessage(
+            "Something went wrong. Please try again."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     }
 
     loadUser();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  /*
+   * --------------------------------------------------
+   * AUTOMATIC ACTIVATION CHECK
+   *
+   * This checks every 5 seconds.
+   *
+   * Example:
+   *
+   * User is on activation page
+   *       ↓
+   * Admin approves payment
+   *       ↓
+   * API sets is_activated = true
+   *       ↓
+   * This detects it
+   *       ↓
+   * /body
+   * --------------------------------------------------
+   */
+
+  useEffect(() => {
+    let interval:
+      ReturnType<typeof setInterval> | null =
+      null;
+
+    async function startActivationWatcher() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      interval = setInterval(async () => {
+        const activated =
+          await checkActivationStatus(
+            user.id
+          );
+
+        if (activated && interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+      }, 5000);
+    }
+
+    if (!loading) {
+      startActivationWatcher();
+    }
+
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [loading]);
+
+  /*
+   * --------------------------------------------------
+   * LOAD EXISTING ACTIVATION REQUEST
+   * --------------------------------------------------
+   */
 
   async function loadExistingRequest(
     userId: string
@@ -180,6 +325,7 @@ export default function ActivatePage() {
           "Activation request lookup error:",
           error
         );
+
         return;
       }
 
@@ -221,6 +367,12 @@ export default function ActivatePage() {
     }
   }
 
+  /*
+   * --------------------------------------------------
+   * ACTIVE REQUEST
+   * --------------------------------------------------
+   */
+
   function hasActiveRequest() {
     return (
       existingRequest !== null &&
@@ -232,10 +384,18 @@ export default function ActivatePage() {
 
   function paymentHasBeenSubmitted() {
     return (
-      existingRequest?.status === "submitted" ||
-      existingRequest?.status === "under_review"
+      existingRequest?.status ===
+        "submitted" ||
+      existingRequest?.status ===
+        "under_review"
     );
   }
+
+  /*
+   * --------------------------------------------------
+   * REQUEST PAYMENT DETAILS
+   * --------------------------------------------------
+   */
 
   async function requestPaymentDetails() {
     if (requestingDetails) return;
@@ -283,8 +443,11 @@ export default function ActivatePage() {
           body: JSON.stringify({
             action:
               "request_payment_details",
+
             packageType,
-            userId: session.user.id,
+
+            userId:
+              session.user.id,
           }),
         }
       );
@@ -295,9 +458,9 @@ export default function ActivatePage() {
       if (!response.ok) {
         if (
           response.status === 500 ||
-          result.error?.toLowerCase().includes(
-            "duplicate"
-          )
+          result.error
+            ?.toLowerCase()
+            .includes("duplicate")
         ) {
           await loadExistingRequest(
             session.user.id
@@ -338,6 +501,12 @@ export default function ActivatePage() {
       setRequestingDetails(false);
     }
   }
+
+  /*
+   * --------------------------------------------------
+   * SUBMIT PAYMENT
+   * --------------------------------------------------
+   */
 
   async function submitPayment() {
     if (submittingPayment) return;
@@ -425,6 +594,13 @@ export default function ActivatePage() {
       const filePath =
         `${session.user.id}/${existingRequest.id}-${Date.now()}.${fileExtension}`;
 
+      /*
+       * UPLOAD PAYMENT SCREENSHOT
+       *
+       * This is kept exactly in the
+       * existing working flow.
+       */
+
       const {
         error: uploadError,
       } = await supabase.storage
@@ -452,6 +628,10 @@ export default function ActivatePage() {
 
         return;
       }
+
+      /*
+       * SEND PAYMENT PROOF TO API
+       */
 
       const response = await fetch(
         "/api/admin/activation",
@@ -530,6 +710,12 @@ export default function ActivatePage() {
     }
   }
 
+  /*
+   * --------------------------------------------------
+   * LOADING SCREEN
+   * --------------------------------------------------
+   */
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#030712] px-5 text-white">
@@ -564,6 +750,8 @@ export default function ActivatePage() {
     <main className="min-h-screen bg-[#030712] px-4 py-6 text-white">
       <div className="mx-auto max-w-md">
 
+        {/* HEADER */}
+
         <div className="mb-6 text-center">
           <h1 className="text-3xl font-black">
             TAP
@@ -578,6 +766,8 @@ export default function ActivatePage() {
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
+
+          {/* ACTIVATION */}
 
           <p className="text-sm font-black text-yellow-300">
             ACTIVATION
@@ -678,253 +868,270 @@ export default function ActivatePage() {
 
           {/* EXISTING REQUEST */}
 
-          {activeRequest && existingRequest && (
-            <div className="mt-5 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-4">
+          {activeRequest &&
+            existingRequest && (
+              <div className="mt-5 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-4">
 
-              <p className="text-sm font-black text-blue-300">
-                {paymentSubmitted
-                  ? "🔎 PAYMENT SUBMITTED FOR REVIEW"
-                  : hasPaymentDetails
-                  ? "💳 PAYMENT DETAILS RECEIVED"
-                  : "⏳ PAYMENT DETAILS REQUESTED"}
-              </p>
-
-              {!hasPaymentDetails && (
-                <p className="mt-2 text-sm leading-5 text-slate-300">
-                  Your request has been sent to
-                  TapBumber Admin. Please wait for
-                  the admin to reply here.
+                <p className="text-sm font-black text-blue-300">
+                  {paymentSubmitted
+                    ? "🔎 PAYMENT SUBMITTED FOR REVIEW"
+                    : hasPaymentDetails
+                    ? "💳 PAYMENT DETAILS RECEIVED"
+                    : "⏳ PAYMENT DETAILS REQUESTED"}
                 </p>
-              )}
 
-              {hasPaymentDetails && (
-                <>
+                {!hasPaymentDetails && (
                   <p className="mt-2 text-sm leading-5 text-slate-300">
-                    TapBumber Admin has sent your
-                    payment details. Review them
-                    carefully before making your
-                    activation payment.
+                    Your request has been sent to
+                    TapBumber Admin. Please wait for
+                    the admin to reply here.
                   </p>
+                )}
 
-                  {/* PAYMENT DETAILS */}
-
-                  <div className="mt-4 rounded-xl border border-yellow-400/30 bg-black/50 p-4">
-                    <p className="mb-2 text-xs font-black uppercase tracking-wider text-yellow-400">
-                      Payment Details
+                {hasPaymentDetails && (
+                  <>
+                    <p className="mt-2 text-sm leading-5 text-slate-300">
+                      TapBumber Admin has sent your
+                      payment details. Review them
+                      carefully before making your
+                      activation payment.
                     </p>
 
-                    <p className="whitespace-pre-wrap break-words text-sm leading-6 text-white">
-                      {existingRequest.admin_reply}
-                    </p>
-                  </div>
+                    {/* PAYMENT DETAILS */}
 
-                  {/* PAYMENT ALREADY SUBMITTED */}
-
-                  {paymentSubmitted && (
-                    <div className="mt-4 rounded-xl border border-green-400/30 bg-green-400/10 p-4">
-
-                      <p className="text-sm font-black text-green-300">
-                        ✅ PAYMENT PROOF SUBMITTED
+                    <div className="mt-4 rounded-xl border border-yellow-400/30 bg-black/50 p-4">
+                      <p className="mb-2 text-xs font-black uppercase tracking-wider text-yellow-400">
+                        Payment Details
                       </p>
 
-                      <p className="mt-2 text-sm leading-5 text-slate-300">
-                        Your payment proof has been
-                        received and is waiting for
-                        admin verification.
-                      </p>
-
-                      {existingRequest.payment_reference && (
-                        <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                            Payment Reference
-                          </p>
-
-                          <p className="mt-1 break-words text-sm font-bold text-white">
-                            {existingRequest.payment_reference}
-                          </p>
-                        </div>
-                      )}
-
-                      {existingRequest.payment_note && (
-                        <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                            Payment Note
-                          </p>
-
-                          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-300">
-                            {existingRequest.payment_note}
-                          </p>
-                        </div>
-                      )}
-
-                      <p className="mt-3 text-xs leading-5 text-yellow-200">
-                        Your account is still inactive.
-                        Activation happens only after
-                        TapBumber Admin verifies and
-                        approves your payment.
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6 text-white">
+                        {existingRequest.admin_reply}
                       </p>
                     </div>
-                  )}
 
-                  {/* PAYMENT SUBMISSION FORM */}
+                    {/* PAYMENT ALREADY SUBMITTED */}
 
-                  {!paymentSubmitted && (
-                    <div className="mt-4 rounded-xl border border-green-400/30 bg-black/40 p-4">
+                    {paymentSubmitted && (
+                      <div className="mt-4 rounded-xl border border-green-400/30 bg-green-400/10 p-4">
 
-                      <p className="text-sm font-black text-green-300">
-                        💳 PAYMENT COMPLETED?
-                      </p>
+                        <p className="text-sm font-black text-green-300">
+                          ✅ PAYMENT PROOF SUBMITTED
+                        </p>
 
-                      <p className="mt-2 text-xs leading-5 text-slate-400">
-                        Make your payment using the
-                        details above, then upload your
-                        payment screenshot below.
-                      </p>
+                        <p className="mt-2 text-sm leading-5 text-slate-300">
+                          Your payment proof has been
+                          received and is waiting for
+                          admin verification.
+                        </p>
 
-                      {/* SCREENSHOT */}
+                        {existingRequest.payment_reference && (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                              Payment Reference
+                            </p>
 
-                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
-                        📸 Payment Screenshot
-                      </label>
+                            <p className="mt-1 break-words text-sm font-bold text-white">
+                              {
+                                existingRequest.payment_reference
+                              }
+                            </p>
+                          </div>
+                        )}
 
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) => {
-                          const file =
-                            event.target.files?.[0] ||
-                            null;
+                        {existingRequest.payment_note && (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                              Payment Note
+                            </p>
 
-                          if (!file) {
+                            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-300">
+                              {
+                                existingRequest.payment_note
+                              }
+                            </p>
+                          </div>
+                        )}
+
+                        <p className="mt-3 text-xs leading-5 text-yellow-200">
+                          Your account is still inactive.
+                          Activation happens only after
+                          TapBumber Admin verifies and
+                          approves your payment.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* PAYMENT SUBMISSION FORM */}
+
+                    {!paymentSubmitted && (
+                      <div className="mt-4 rounded-xl border border-green-400/30 bg-black/40 p-4">
+
+                        <p className="text-sm font-black text-green-300">
+                          💳 PAYMENT COMPLETED?
+                        </p>
+
+                        <p className="mt-2 text-xs leading-5 text-slate-400">
+                          Make your payment using the
+                          details above, then upload your
+                          payment screenshot below.
+                        </p>
+
+                        {/* SCREENSHOT */}
+
+                        <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                          📸 Payment Screenshot
+                        </label>
+
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(event) => {
+                            const file =
+                              event.target.files?.[0] ||
+                              null;
+
+                            if (!file) {
+                              setPaymentScreenshot(
+                                null
+                              );
+
+                              return;
+                            }
+
+                            if (
+                              !file.type.startsWith(
+                                "image/"
+                              )
+                            ) {
+                              setMessage(
+                                "⚠️ Please choose an image screenshot."
+                              );
+
+                              event.target.value =
+                                "";
+
+                              setPaymentScreenshot(
+                                null
+                              );
+
+                              return;
+                            }
+
+                            if (
+                              file.size >
+                              MAX_FILE_SIZE
+                            ) {
+                              setMessage(
+                                "⚠️ Screenshot must be under 5MB."
+                              );
+
+                              event.target.value =
+                                "";
+
+                              setPaymentScreenshot(
+                                null
+                              );
+
+                              return;
+                            }
+
+                            setMessage("");
+
                             setPaymentScreenshot(
-                              null
+                              file
                             );
-                            return;
-                          }
+                          }}
+                          className="mt-2 block w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-yellow-400 file:px-3 file:py-2 file:text-xs file:font-black file:text-black"
+                        />
 
-                          if (
-                            !file.type.startsWith(
-                              "image/"
+                        {paymentScreenshot && (
+                          <div className="mt-2 rounded-lg border border-green-400/20 bg-green-400/10 p-3">
+                            <p className="text-xs font-bold text-green-300">
+                              📸{" "}
+                              {
+                                paymentScreenshot.name
+                              }
+                            </p>
+
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              Screenshot ready to send.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* OPTIONAL REFERENCE */}
+
+                        <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                          Payment Reference
+                          <span className="ml-1 normal-case text-slate-600">
+                            (optional)
+                          </span>
+                        </label>
+
+                        <input
+                          type="text"
+                          value={
+                            paymentReference
+                          }
+                          onChange={(event) =>
+                            setPaymentReference(
+                              event.target.value
                             )
-                          ) {
-                            setMessage(
-                              "⚠️ Please choose an image screenshot."
-                            );
-
-                            event.target.value = "";
-                            setPaymentScreenshot(
-                              null
-                            );
-
-                            return;
                           }
+                          placeholder="Transaction/reference ID"
+                          className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
+                        />
 
-                          if (
-                            file.size >
-                            MAX_FILE_SIZE
-                          ) {
-                            setMessage(
-                              "⚠️ Screenshot must be under 5MB."
-                            );
+                        {/* OPTIONAL NOTE */}
 
-                            event.target.value = "";
-                            setPaymentScreenshot(
-                              null
-                            );
+                        <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                          Note
+                          <span className="ml-1 normal-case text-slate-600">
+                            (optional)
+                          </span>
+                        </label>
 
-                            return;
+                        <textarea
+                          value={paymentNote}
+                          onChange={(event) =>
+                            setPaymentNote(
+                              event.target.value
+                            )
                           }
+                          placeholder="Anything the admin should know?"
+                          rows={2}
+                          className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
+                        />
 
-                          setMessage("");
-                          setPaymentScreenshot(
-                            file
-                          );
-                        }}
-                        className="mt-2 block w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-yellow-400 file:px-3 file:py-2 file:text-xs file:font-black file:text-black"
-                      />
+                        {/* SEND */}
 
-                      {paymentScreenshot && (
-                        <div className="mt-2 rounded-lg border border-green-400/20 bg-green-400/10 p-3">
-                          <p className="text-xs font-bold text-green-300">
-                            📸{" "}
-                            {paymentScreenshot.name}
-                          </p>
+                        <button
+                          type="button"
+                          onClick={
+                            submitPayment
+                          }
+                          disabled={
+                            submittingPayment ||
+                            !paymentScreenshot
+                          }
+                          className="mt-4 w-full rounded-2xl border border-green-400 bg-green-400/15 px-4 py-3.5 font-black text-green-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {submittingPayment
+                            ? "SENDING PAYMENT PROOF..."
+                            : "✅ SEND PAYMENT PROOF"}
+                        </button>
 
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            Screenshot ready to send.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* OPTIONAL REFERENCE */}
-
-                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
-                        Payment Reference
-                        <span className="ml-1 normal-case text-slate-600">
-                          (optional)
-                        </span>
-                      </label>
-
-                      <input
-                        type="text"
-                        value={paymentReference}
-                        onChange={(event) =>
-                          setPaymentReference(
-                            event.target.value
-                          )
-                        }
-                        placeholder="Transaction/reference ID"
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
-                      />
-
-                      {/* OPTIONAL NOTE */}
-
-                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
-                        Note
-                        <span className="ml-1 normal-case text-slate-600">
-                          (optional)
-                        </span>
-                      </label>
-
-                      <textarea
-                        value={paymentNote}
-                        onChange={(event) =>
-                          setPaymentNote(
-                            event.target.value
-                          )
-                        }
-                        placeholder="Anything the admin should know?"
-                        rows={2}
-                        className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
-                      />
-
-                      {/* SEND */}
-
-                      <button
-                        type="button"
-                        onClick={submitPayment}
-                        disabled={
-                          submittingPayment ||
-                          !paymentScreenshot
-                        }
-                        className="mt-4 w-full rounded-2xl border border-green-400 bg-green-400/15 px-4 py-3.5 font-black text-green-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {submittingPayment
-                          ? "SENDING PAYMENT PROOF..."
-                          : "✅ SEND PAYMENT PROOF"}
-                      </button>
-
-                      <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
-                        Your account will not be activated
-                        automatically. Admin must verify
-                        and approve your payment.
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+                        <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
+                          Your account will not be activated
+                          automatically. Admin must verify
+                          and approve your payment.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
           {/* REQUEST PAYMENT DETAILS */}
 
