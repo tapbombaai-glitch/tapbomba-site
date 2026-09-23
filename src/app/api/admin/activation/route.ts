@@ -409,6 +409,191 @@ export async function POST(
 
     /*
      * ==================================================
+     * USER ACTION
+     * SUBMIT PAYMENT PROOF
+     * ==================================================
+     */
+
+    if (
+      action ===
+      "submit_payment_proof"
+    ) {
+      const {
+        user,
+        error: authError,
+      } = await getAuthenticatedUser(
+        request
+      );
+
+      if (!user) {
+        return NextResponse.json(
+          {
+            error:
+              authError ||
+              "You must be logged in.",
+          },
+          { status: 401 }
+        );
+      }
+
+      if (!requestId) {
+        return NextResponse.json(
+          {
+            error:
+              "Activation request ID is required.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const paymentProofUrl =
+        body?.paymentProofUrl;
+
+      const paymentReference =
+        body?.paymentReference;
+
+      const paymentNote =
+        body?.paymentNote;
+
+      if (
+        typeof paymentProofUrl !==
+          "string" ||
+        !paymentProofUrl.trim()
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Payment screenshot is required.",
+          },
+          { status: 400 }
+        );
+      }
+
+      /*
+       * Find the activation request
+       * belonging to the logged-in user.
+       */
+
+      const {
+        data: activationRequest,
+        error: requestError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .select(
+          "id, user_id, status, admin_reply"
+        )
+        .eq("id", requestId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (
+        requestError ||
+        !activationRequest
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Your activation request could not be found.",
+          },
+          { status: 404 }
+        );
+      }
+
+      /*
+       * User must receive payment details
+       * before submitting payment proof.
+       */
+
+      if (
+        activationRequest.status !==
+        "payment_details_requested"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "You can only submit payment proof after receiving payment details from Admin.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !activationRequest.admin_reply?.trim()
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Please wait for Admin to send the payment details first.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const now =
+        new Date().toISOString();
+
+      const {
+        data,
+        error: updateError,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          payment_proof_url:
+            paymentProofUrl.trim(),
+
+          payment_reference:
+            typeof paymentReference ===
+            "string"
+              ? paymentReference.trim() ||
+                null
+              : null,
+
+          payment_note:
+            typeof paymentNote ===
+            "string"
+              ? paymentNote.trim() ||
+                null
+              : null,
+
+          payment_submitted_at:
+            now,
+
+          status: "submitted",
+
+          updated_at: now,
+        })
+        .eq("id", requestId)
+        .eq("user_id", user.id)
+        .select(
+          "id, user_id, status, payment_reference, payment_note, payment_proof_url, payment_submitted_at"
+        )
+        .single();
+
+      if (updateError) {
+        console.error(
+          "Payment proof submission error:",
+          updateError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              updateError.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: data,
+        message:
+          "Payment proof sent to TapBumber Admin successfully.",
+      });
+    }
+
+    /*
+     * ==================================================
      * ALL ACTIONS BELOW THIS POINT ARE ADMIN ACTIONS
      * ==================================================
      */
