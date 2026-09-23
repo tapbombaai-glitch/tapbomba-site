@@ -28,6 +28,9 @@ type ActivationRequest = {
   admin_reply: string | null;
   payment_reference: string | null;
   payment_note: string | null;
+  payment_proof_url: string | null;
+  payment_submitted_at: string | null;
+  rejection_reason: string | null;
   created_at: string | null;
 };
 
@@ -38,14 +41,14 @@ const ACTIVE_STATUSES = [
   "payment_details_requested",
 ];
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
 export default function ActivatePage() {
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
 
   const [loading, setLoading] = useState(true);
-
   const [userName, setUserName] = useState("");
-
   const [message, setMessage] = useState("");
 
   const [requestingDetails, setRequestingDetails] =
@@ -59,6 +62,9 @@ export default function ActivatePage() {
 
   const [paymentNote, setPaymentNote] =
     useState("");
+
+  const [paymentScreenshot, setPaymentScreenshot] =
+    useState<File | null>(null);
 
   const [existingRequest, setExistingRequest] =
     useState<ActivationRequest | null>(null);
@@ -160,7 +166,7 @@ export default function ActivatePage() {
       } = await supabase
         .from("activation_requests")
         .select(
-          "id, user_id, message, status, admin_reply, payment_reference, payment_note, created_at"
+          "id, user_id, message, status, admin_reply, payment_reference, payment_note, payment_proof_url, payment_submitted_at, rejection_reason, created_at"
         )
         .eq("user_id", userId)
         .order("created_at", {
@@ -336,12 +342,32 @@ export default function ActivatePage() {
   async function submitPayment() {
     if (submittingPayment) return;
 
-    const reference =
-      paymentReference.trim();
-
-    if (!reference) {
+    if (!paymentScreenshot) {
       setMessage(
-        "⚠️ Please enter your payment reference before submitting."
+        "⚠️ Please upload your payment screenshot first."
+      );
+
+      return;
+    }
+
+    if (
+      !paymentScreenshot.type.startsWith(
+        "image/"
+      )
+    ) {
+      setMessage(
+        "⚠️ Please select an image screenshot."
+      );
+
+      return;
+    }
+
+    if (
+      paymentScreenshot.size >
+      MAX_FILE_SIZE
+    ) {
+      setMessage(
+        "⚠️ Your screenshot is too large. Please choose an image under 5MB."
       );
 
       return;
@@ -390,6 +416,51 @@ export default function ActivatePage() {
         return;
       }
 
+      /*
+       * Upload payment screenshot to the
+       * private Supabase Storage bucket.
+       */
+      const fileExtension =
+        paymentScreenshot.name
+          .split(".")
+          .pop()
+          ?.toLowerCase() || "jpg";
+
+      const filePath =
+        `${user.id}/${existingRequest.id}-${Date.now()}.${fileExtension}`;
+
+      const {
+        error: uploadError,
+      } = await supabase.storage
+        .from("payment-proofs")
+        .upload(
+          filePath,
+          paymentScreenshot,
+          {
+            cacheControl: "3600",
+            upsert: false,
+            contentType:
+              paymentScreenshot.type,
+          }
+        );
+
+      if (uploadError) {
+        console.error(
+          "Payment screenshot upload error:",
+          uploadError
+        );
+
+        setMessage(
+          "Unable to upload your payment screenshot. Please try again."
+        );
+
+        return;
+      }
+
+      /*
+       * Save the private storage path,
+       * payment reference and note.
+       */
       const {
         data,
         error,
@@ -397,9 +468,19 @@ export default function ActivatePage() {
         .from("activation_requests")
         .update({
           payment_reference:
-            reference,
+            paymentReference.trim() ||
+            null,
+
           payment_note:
-            paymentNote.trim() || null,
+            paymentNote.trim() ||
+            null,
+
+          payment_proof_url:
+            filePath,
+
+          payment_submitted_at:
+            new Date().toISOString(),
+
           status: "submitted",
         })
         .eq(
@@ -411,7 +492,7 @@ export default function ActivatePage() {
           user.id
         )
         .select(
-          "id, user_id, message, status, admin_reply, payment_reference, payment_note, created_at"
+          "id, user_id, message, status, admin_reply, payment_reference, payment_note, payment_proof_url, payment_submitted_at, rejection_reason, created_at"
         )
         .single();
 
@@ -422,7 +503,7 @@ export default function ActivatePage() {
         );
 
         setMessage(
-          "Unable to submit your payment for review. Please try again."
+          "Your screenshot was uploaded, but the payment submission could not be completed. Please contact TapBumber Admin."
         );
 
         return;
@@ -432,8 +513,10 @@ export default function ActivatePage() {
         data as ActivationRequest
       );
 
+      setPaymentScreenshot(null);
+
       setMessage(
-        "✅ Payment Submitted\n\nYour payment reference has been sent to TapBumber Admin for review. Your account will remain inactive until the payment is verified and approved."
+        "✅ PAYMENT PROOF SENT\n\nYour payment screenshot has been sent to TapBumber Admin for verification. Your account will remain inactive until your payment is approved."
       );
     } catch (error) {
       console.error(
@@ -442,7 +525,7 @@ export default function ActivatePage() {
       );
 
       setMessage(
-        "Unable to submit your payment for review. Please try again."
+        "Unable to submit your payment proof. Please try again."
       );
     } finally {
       setSubmittingPayment(false);
@@ -643,24 +726,26 @@ export default function ActivatePage() {
                     <div className="mt-4 rounded-xl border border-green-400/30 bg-green-400/10 p-4">
 
                       <p className="text-sm font-black text-green-300">
-                        ✅ PAYMENT SUBMITTED
+                        ✅ PAYMENT PROOF SUBMITTED
                       </p>
 
                       <p className="mt-2 text-sm leading-5 text-slate-300">
-                        Your payment reference has
-                        been received and is waiting
-                        for admin verification.
+                        Your payment proof has been
+                        received and is waiting for
+                        admin verification.
                       </p>
 
-                      <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
-                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                          Payment Reference
-                        </p>
+                      {existingRequest.payment_reference && (
+                        <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                            Payment Reference
+                          </p>
 
-                        <p className="mt-1 break-words text-sm font-bold text-white">
-                          {existingRequest.payment_reference}
-                        </p>
-                      </div>
+                          <p className="mt-1 break-words text-sm font-bold text-white">
+                            {existingRequest.payment_reference}
+                          </p>
+                        </div>
+                      )}
 
                       {existingRequest.payment_note && (
                         <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3">
@@ -689,18 +774,97 @@ export default function ActivatePage() {
                     <div className="mt-4 rounded-xl border border-green-400/30 bg-black/40 p-4">
 
                       <p className="text-sm font-black text-green-300">
-                        💳 I HAVE MADE THE PAYMENT
+                        💳 PAYMENT COMPLETED?
                       </p>
 
                       <p className="mt-2 text-xs leading-5 text-slate-400">
-                        Only submit this after you have
-                        actually made the activation
-                        payment using the current
-                        payment details above.
+                        Make your payment using the
+                        details above, then upload your
+                        payment screenshot below.
                       </p>
 
+                      {/* SCREENSHOT */}
+
                       <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
-                        Payment Reference *
+                        📸 Payment Screenshot
+                      </label>
+
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => {
+                          const file =
+                            event.target.files?.[0] ||
+                            null;
+
+                          if (!file) {
+                            setPaymentScreenshot(
+                              null
+                            );
+                            return;
+                          }
+
+                          if (
+                            !file.type.startsWith(
+                              "image/"
+                            )
+                          ) {
+                            setMessage(
+                              "⚠️ Please choose an image screenshot."
+                            );
+
+                            event.target.value = "";
+                            setPaymentScreenshot(
+                              null
+                            );
+
+                            return;
+                          }
+
+                          if (
+                            file.size >
+                            MAX_FILE_SIZE
+                          ) {
+                            setMessage(
+                              "⚠️ Screenshot must be under 5MB."
+                            );
+
+                            event.target.value = "";
+                            setPaymentScreenshot(
+                              null
+                            );
+
+                            return;
+                          }
+
+                          setMessage("");
+                          setPaymentScreenshot(
+                            file
+                          );
+                        }}
+                        className="mt-2 block w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-yellow-400 file:px-3 file:py-2 file:text-xs file:font-black file:text-black"
+                      />
+
+                      {paymentScreenshot && (
+                        <div className="mt-2 rounded-lg border border-green-400/20 bg-green-400/10 p-3">
+                          <p className="text-xs font-bold text-green-300">
+                            📸{" "}
+                            {paymentScreenshot.name}
+                          </p>
+
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Screenshot ready to send.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* OPTIONAL REFERENCE */}
+
+                      <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
+                        Payment Reference
+                        <span className="ml-1 normal-case text-slate-600">
+                          (optional)
+                        </span>
                       </label>
 
                       <input
@@ -711,12 +875,14 @@ export default function ActivatePage() {
                             event.target.value
                           )
                         }
-                        placeholder="Enter transaction/reference ID"
+                        placeholder="Transaction/reference ID"
                         className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
                       />
 
+                      {/* OPTIONAL NOTE */}
+
                       <label className="mt-4 block text-xs font-black uppercase tracking-wider text-slate-400">
-                        Payment Note
+                        Note
                         <span className="ml-1 normal-case text-slate-600">
                           (optional)
                         </span>
@@ -729,28 +895,31 @@ export default function ActivatePage() {
                             event.target.value
                           )
                         }
-                        placeholder="Optional note for the admin"
-                        rows={3}
+                        placeholder="Anything the admin should know?"
+                        rows={2}
                         className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-yellow-400"
                       />
+
+                      {/* SEND */}
 
                       <button
                         type="button"
                         onClick={submitPayment}
                         disabled={
-                          submittingPayment
+                          submittingPayment ||
+                          !paymentScreenshot
                         }
-                        className="mt-4 w-full rounded-2xl border border-green-400 bg-green-400/15 px-4 py-3.5 font-black text-green-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="mt-4 w-full rounded-2xl border border-green-400 bg-green-400/15 px-4 py-3.5 font-black text-green-300 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {submittingPayment
-                          ? "SUBMITTING PAYMENT..."
-                          : "✅ SUBMIT PAYMENT FOR REVIEW"}
+                          ? "SENDING PAYMENT PROOF..."
+                          : "✅ SEND PAYMENT PROOF"}
                       </button>
 
                       <p className="mt-2 text-center text-[11px] leading-4 text-slate-500">
-                        A payment reference is required.
-                        Clicking the button alone will
-                        not activate your account.
+                        Your account will not be activated
+                        automatically. Admin must verify
+                        and approve your payment.
                       </p>
                     </div>
                   )}
@@ -816,11 +985,10 @@ export default function ActivatePage() {
 
           <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
             <p className="text-xs leading-5 text-slate-400">
-              After requesting payment details,
-              wait for TapBumber Admin to reply
-              inside your account. Do not make
-              your activation payment until you
-              receive the current payment details.
+              Never send payment to an old or
+              unconfirmed account. Always use the
+              latest payment details provided by
+              TapBumber Admin inside the app.
             </p>
           </div>
 
