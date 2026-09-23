@@ -14,8 +14,7 @@ const SUPABASE_SERVICE_ROLE_KEY =
 
 /*
  * --------------------------------------------------
- * SERVICE-ROLE CLIENT
- * Used only for secure admin operations.
+ * SERVICE ROLE CLIENT
  * --------------------------------------------------
  */
 
@@ -42,9 +41,7 @@ async function getAuthenticatedUser(
   const authorization =
     request.headers.get("authorization");
 
-  if (
-    !authorization?.startsWith("Bearer ")
-  ) {
+  if (!authorization?.startsWith("Bearer ")) {
     return {
       user: null,
       error: "Missing authorization token.",
@@ -224,7 +221,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * USER ACTION
+     * USER:
      * REQUEST PAYMENT DETAILS
      * ==================================================
      */
@@ -263,10 +260,6 @@ export async function POST(
           { status: 400 }
         );
       }
-
-      /*
-       * Prevent creating another active request.
-       */
 
       const {
         data: existingRequest,
@@ -319,52 +312,10 @@ export async function POST(
         `Payment details requested for ${packageName} package. ` +
         `Activation fee: ₦${fee.toLocaleString()}.`;
 
-      const authorization =
-        request.headers.get(
-          "authorization"
-        );
-
-      if (
-        !authorization?.startsWith(
-          "Bearer "
-        )
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Missing authorization token.",
-          },
-          { status: 401 }
-        );
-      }
-
-      const token =
-        authorization
-          .replace("Bearer ", "")
-          .trim();
-
-      const supabaseUser =
-        createClient(
-          SUPABASE_URL,
-          SUPABASE_ANON_KEY,
-          {
-            auth: {
-              autoRefreshToken: false,
-              persistSession: false,
-            },
-            global: {
-              headers: {
-                Authorization:
-                  `Bearer ${token}`,
-              },
-            },
-          }
-        );
-
       const {
         data,
         error,
-      } = await supabaseUser
+      } = await supabaseAdmin
         .from("activation_requests")
         .insert({
           user_id: user.id,
@@ -392,8 +343,7 @@ export async function POST(
 
         return NextResponse.json(
           {
-            error:
-              error.message,
+            error: error.message,
           },
           { status: 500 }
         );
@@ -409,7 +359,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * USER ACTION
+     * USER:
      * SUBMIT PAYMENT PROOF
      * ==================================================
      */
@@ -456,8 +406,7 @@ export async function POST(
         body?.paymentNote;
 
       if (
-        typeof paymentProofUrl !==
-          "string" ||
+        typeof paymentProofUrl !== "string" ||
         !paymentProofUrl.trim()
       ) {
         return NextResponse.json(
@@ -468,11 +417,6 @@ export async function POST(
           { status: 400 }
         );
       }
-
-      /*
-       * Find the activation request
-       * belonging to the logged-in user.
-       */
 
       const {
         data: activationRequest,
@@ -498,11 +442,6 @@ export async function POST(
           { status: 404 }
         );
       }
-
-      /*
-       * User must receive payment details
-       * before submitting payment proof.
-       */
 
       if (
         activationRequest.status !==
@@ -542,24 +481,17 @@ export async function POST(
             paymentProofUrl.trim(),
 
           payment_reference:
-            typeof paymentReference ===
-            "string"
-              ? paymentReference.trim() ||
-                null
+            typeof paymentReference === "string"
+              ? paymentReference.trim() || null
               : null,
 
           payment_note:
-            typeof paymentNote ===
-            "string"
-              ? paymentNote.trim() ||
-                null
+            typeof paymentNote === "string"
+              ? paymentNote.trim() || null
               : null,
 
-          payment_submitted_at:
-            now,
-
+          payment_submitted_at: now,
           status: "submitted",
-
           updated_at: now,
         })
         .eq("id", requestId)
@@ -594,7 +526,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * ALL ACTIONS BELOW THIS POINT ARE ADMIN ACTIONS
+     * ALL ACTIONS BELOW ARE ADMIN ACTIONS
      * ==================================================
      */
 
@@ -626,7 +558,8 @@ export async function POST(
 
     /*
      * ==================================================
-     * ADMIN SENDS PAYMENT DETAILS
+     * ADMIN:
+     * SEND PAYMENT DETAILS
      * ==================================================
      */
 
@@ -679,18 +612,14 @@ export async function POST(
       } = await supabaseAdmin
         .from("activation_requests")
         .update({
-          admin_reply:
-            reply.trim(),
+          admin_reply: reply.trim(),
           status:
             "payment_details_requested",
           reviewed_by: user.id,
           reviewed_at: now,
           updated_at: now,
         })
-        .eq(
-          "id",
-          requestId
-        );
+        .eq("id", requestId);
 
       if (updateError) {
         console.error(
@@ -716,7 +645,7 @@ export async function POST(
 
     /*
      * ==================================================
-     * LOAD REQUEST FOR APPROVE / REJECT
+     * LOAD REQUEST FOR APPROVAL / REJECTION
      * ==================================================
      */
 
@@ -751,7 +680,8 @@ export async function POST(
 
     /*
      * ==================================================
-     * ADMIN REJECTS PAYMENT
+     * ADMIN:
+     * REJECT PAYMENT
      * ==================================================
      */
 
@@ -775,8 +705,7 @@ export async function POST(
       }
 
       const reason =
-        typeof rejectionReason ===
-          "string" &&
+        typeof rejectionReason === "string" &&
         rejectionReason.trim()
           ? rejectionReason.trim()
           : "Payment proof could not be verified.";
@@ -796,10 +725,7 @@ export async function POST(
           reviewed_at: now,
           updated_at: now,
         })
-        .eq(
-          "id",
-          requestId
-        );
+        .eq("id", requestId);
 
       if (rejectError) {
         console.error(
@@ -825,7 +751,8 @@ export async function POST(
 
     /*
      * ==================================================
-     * ADMIN APPROVES PAYMENT
+     * ADMIN:
+     * APPROVE PAYMENT + ACTIVATE USER
      * ==================================================
      */
 
@@ -861,8 +788,7 @@ export async function POST(
       }
 
       /*
-       * Determine package from the current
-       * payment-details request message.
+       * Determine package from request message.
        */
 
       const packageMatch =
@@ -900,10 +826,13 @@ export async function POST(
         new Date().toISOString();
 
       /*
-       * Activate the user's profile.
+       * --------------------------------------------------
+       * ACTIVATE USER PROFILE
+       * --------------------------------------------------
        */
 
       const {
+        data: updatedProfile,
         error: profileError,
       } = await supabaseAdmin
         .from("user_profiles")
@@ -916,7 +845,11 @@ export async function POST(
         .eq(
           "id",
           activationRequest.user_id
-        );
+        )
+        .select(
+          "id, email, is_activated, package, activated_at"
+        )
+        .single();
 
       if (profileError) {
         console.error(
@@ -935,7 +868,28 @@ export async function POST(
       }
 
       /*
-       * Mark the activation request approved.
+       * Safety check:
+       * Make absolutely sure the profile was
+       * actually activated.
+       */
+
+      if (
+        !updatedProfile ||
+        updatedProfile.is_activated !== true
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Activation update did not confirm is_activated = true.",
+          },
+          { status: 500 }
+        );
+      }
+
+      /*
+       * --------------------------------------------------
+       * MARK ACTIVATION REQUEST APPROVED
+       * --------------------------------------------------
        */
 
       const {
@@ -950,10 +904,7 @@ export async function POST(
           reviewed_at: now,
           updated_at: now,
         })
-        .eq(
-          "id",
-          requestId
-        );
+        .eq("id", requestId);
 
       if (updateError) {
         console.error(
@@ -976,8 +927,15 @@ export async function POST(
         message:
           "Payment approved and user activated successfully.",
         package: packageName,
+        profile: updatedProfile,
       });
     }
+
+    /*
+     * --------------------------------------------------
+     * UNKNOWN ACTION
+     * --------------------------------------------------
+     */
 
     return NextResponse.json(
       {
