@@ -42,14 +42,11 @@ export default function ActivatePage() {
   const [packageType, setPackageType] =
     useState<PackageType>("standard");
 
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [userName, setUserName] =
-    useState("");
+  const [userName, setUserName] = useState("");
 
-  const [message, setMessage] =
-    useState("");
+  const [message, setMessage] = useState("");
 
   const [requestingDetails, setRequestingDetails] =
     useState(false);
@@ -66,8 +63,7 @@ export default function ActivatePage() {
   const [existingRequest, setExistingRequest] =
     useState<ActivationRequest | null>(null);
 
-  const selectedPackage =
-    PACKAGES[packageType];
+  const selectedPackage = PACKAGES[packageType];
 
   useEffect(() => {
     async function loadUser() {
@@ -80,10 +76,7 @@ export default function ActivatePage() {
         } = await supabase.auth.getUser();
 
         if (error) {
-          console.error(
-            "Unable to load user:",
-            error
-          );
+          console.error("Unable to load user:", error);
 
           setMessage(
             "Unable to verify your account. Please login again."
@@ -133,9 +126,7 @@ export default function ActivatePage() {
           setMessage(
             `Your account is already activated on the ${
               profile.package
-                ? String(
-                    profile.package
-                  ).toUpperCase()
+                ? String(profile.package).toUpperCase()
                 : "SELECTED"
             } package.`
           );
@@ -491,6 +482,7 @@ export default function ActivatePage() {
   return (
     <main className="min-h-screen bg-[#030712] px-4 py-6 text-white">
       <div className="mx-auto max-w-md">
+
         <div className="mb-6 text-center">
           <h1 className="text-3xl font-black">
             TAP
@@ -505,6 +497,7 @@ export default function ActivatePage() {
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-black/60 p-5 shadow-2xl backdrop-blur-xl">
+
           <p className="text-sm font-black text-yellow-300">
             ACTIVATION
           </p>
@@ -602,10 +595,11 @@ export default function ActivatePage() {
             </div>
           </div>
 
-          {/* EXISTING REQUEST STATUS */}
+          {/* EXISTING REQUEST */}
 
           {activeRequest && (
             <div className="mt-5 rounded-2xl border border-blue-400/20 bg-blue-400/10 p-4">
+
               <p className="text-sm font-black text-blue-300">
                 {paymentSubmitted
                   ? "🔎 PAYMENT SUBMITTED FOR REVIEW"
@@ -631,20 +625,23 @@ export default function ActivatePage() {
                     activation payment.
                   </p>
 
+                  {/* PAYMENT DETAILS */}
+
                   <div className="mt-4 rounded-xl border border-yellow-400/30 bg-black/50 p-4">
                     <p className="mb-2 text-xs font-black uppercase tracking-wider text-yellow-400">
                       Payment Details
                     </p>
 
                     <p className="whitespace-pre-wrap break-words text-sm leading-6 text-white">
-                      {existingRequest?.admin_reply}
+                      {existingRequest.admin_reply}
                     </p>
                   </div>
 
-                  {/* PAYMENT SUBMITTED */}
+                  {/* PAYMENT ALREADY SUBMITTED */}
 
                   {paymentSubmitted && (
                     <div className="mt-4 rounded-xl border border-green-400/30 bg-green-400/10 p-4">
+
                       <p className="text-sm font-black text-green-300">
                         ✅ PAYMENT SUBMITTED
                       </p>
@@ -689,8 +686,9 @@ export default function ActivatePage() {
                   {/* PAYMENT SUBMISSION FORM */}
 
                   {!paymentSubmitted && (
-                    <div className="mt-4 rounded-xl border border-yellow-400/30 bg-black/40 p-4">
-                      <p className="text-sm font-black text-yellow-300">
+                    <div className="mt-4 rounded-xl border border-green-400/30 bg-black/40 p-4">
+
+                      <p className="text-sm font-black text-green-300">
                         💳 I HAVE MADE THE PAYMENT
                       </p>
 
@@ -707,9 +705,7 @@ export default function ActivatePage() {
 
                       <input
                         type="text"
-                        value={
-                          paymentReference
-                        }
+                        value={paymentReference}
                         onChange={(event) =>
                           setPaymentReference(
                             event.target.value
@@ -740,9 +736,7 @@ export default function ActivatePage() {
 
                       <button
                         type="button"
-                        onClick={
-                          submitPayment
-                        }
+                        onClick={submitPayment}
                         disabled={
                           submittingPayment
                         }
@@ -769,6 +763,7 @@ export default function ActivatePage() {
 
           {!activeRequest && (
             <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4">
+
               <div className="flex items-start gap-3">
                 <div className="text-2xl">
                   💳
@@ -809,7 +804,7 @@ export default function ActivatePage() {
             </div>
           )}
 
-          {/* REQUEST STATUS / ADMIN MESSAGE */}
+          {/* MESSAGE */}
 
           {message && (
             <div className="mt-5 whitespace-pre-line rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center text-sm leading-5 text-yellow-200">
@@ -828,6 +823,7 @@ export default function ActivatePage() {
               receive the current payment details.
             </p>
           </div>
+
         </div>
       </div>
     </main>
