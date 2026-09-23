@@ -1,830 +1,711 @@
-"use client";
-
-import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-
-type ActivationRequest = {
-  id: string;
-  user_id: string;
-  message: string | null;
-  status: string | null;
-  payment_reference: string | null;
-  payment_note: string | null;
-  payment_proof_url: string | null;
-  payment_submitted_at: string | null;
-  rejection_reason: string | null;
-  admin_reply: string | null;
-  created_at: string | null;
-  updated_at?: string | null;
-  user_email?: string | null;
-  full_name?: string | null;
-};
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 const ADMIN_EMAIL = "tapbomba.ai@gmail.com";
 
-export default function AdminPage() {
-  const [loading, setLoading] = useState(true);
-  const [admin, setAdmin] = useState(false);
-  const [requests, setRequests] = useState<ActivationRequest[]>([]);
-  const [message, setMessage] = useState("");
-  const [processingId, setProcessingId] = useState<string | null>(null);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceRoleKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-  const [paymentDetails, setPaymentDetails] = useState<
-    Record<string, string>
-  >({});
+const supabaseAdmin = createClient(
+  supabaseUrl,
+  supabaseServiceRoleKey,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
 
-  const [rejectionReasons, setRejectionReasons] = useState<
-    Record<string, string>
-  >({});
+async function getAuthenticatedUser(request: NextRequest) {
+  const authorization =
+    request.headers.get("authorization") || "";
 
-  const [proofUrls, setProofUrls] = useState<
-    Record<string, string>
-  >({});
-
-  const [loadingProofId, setLoadingProofId] = useState<string | null>(
-    null
-  );
-
-  useEffect(() => {
-    checkAdmin();
-  }, []);
-
-  async function checkAdmin() {
-    setLoading(true);
-    setMessage("");
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setAdmin(false);
-        setMessage("Please log in first.");
-        return;
-      }
-
-      if (user.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
-        setAdmin(false);
-        setMessage("Access denied. Admin account only.");
-        return;
-      }
-
-      setAdmin(true);
-      await loadRequests();
-    } catch (error) {
-      console.error(error);
-      setMessage("Unable to load admin panel.");
-    } finally {
-      setLoading(false);
-    }
+  if (!authorization.startsWith("Bearer ")) {
+    return null;
   }
 
-  async function loadRequests() {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+  const token = authorization.replace("Bearer ", "").trim();
 
-      if (!session) {
-        setMessage("Admin session expired. Please log in again.");
-        return;
-      }
+  if (!token) {
+    return null;
+  }
 
-      const response = await fetch("/api/admin/activation", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
+  const {
+    data: { user },
+    error,
+  } = await supabaseAdmin.auth.getUser(token);
+
+  if (error || !user) {
+    return null;
+  }
+
+  return user;
+}
+
+async function requireAdmin(request: NextRequest) {
+  const user = await getAuthenticatedUser(request);
+
+  if (!user) {
+    return {
+      user: null,
+      response: NextResponse.json(
+        { error: "Unauthorized." },
+        { status: 401 }
+      ),
+    };
+  }
+
+  if (
+    user.email?.toLowerCase() !==
+    ADMIN_EMAIL.toLowerCase()
+  ) {
+    return {
+      user: null,
+      response: NextResponse.json(
+        { error: "Access denied. Admin account only." },
+        { status: 403 }
+      ),
+    };
+  }
+
+  return {
+    user,
+    response: null,
+  };
+}
+
+/**
+ * GET
+ *
+ * Loads activation requests and attaches:
+ * - user full name
+ * - user email
+ */
+export async function GET(request: NextRequest) {
+  const auth = await requireAdmin(request);
+
+  if (auth.response) {
+    return auth.response;
+  }
+
+  try {
+    const { data: requests, error } =
+      await supabaseAdmin
+        .from("activation_requests")
+        .select(
+          `
+          id,
+          user_id,
+          message,
+          status,
+          payment_reference,
+          payment_note,
+          payment_proof_url,
+          payment_submitted_at,
+          rejection_reason,
+          admin_reply,
+          created_at,
+          updated_at
+        `
+        )
+        .order("created_at", {
+          ascending: false,
+        });
+
+    if (error) {
+      console.error(
+        "Load activation requests error:",
+        error
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Unable to load activation requests.",
         },
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        console.error("Admin request error:", result);
-
-        setMessage(
-          result.error || "Unable to load activation requests."
-        );
-
-        return;
-      }
-
-      setRequests(result.requests || []);
-    } catch (error) {
-      console.error("Load requests error:", error);
-      setMessage("Unable to load activation requests.");
-    }
-  }
-
-  function detectPackage(request: ActivationRequest) {
-    const text = request.message || "";
-
-    if (/STANDARD/i.test(text)) {
-      return "STANDARD";
-    }
-
-    if (/PREMIUM/i.test(text)) {
-      return "PREMIUM";
-    }
-
-    return "UNKNOWN";
-  }
-
-  function updatePaymentDetails(
-    requestId: string,
-    value: string
-  ) {
-    setPaymentDetails((current) => ({
-      ...current,
-      [requestId]: value,
-    }));
-  }
-
-  function updateRejectionReason(
-    requestId: string,
-    value: string
-  ) {
-    setRejectionReasons((current) => ({
-      ...current,
-      [requestId]: value,
-    }));
-  }
-
-  async function sendPaymentDetails(
-    request: ActivationRequest
-  ) {
-    const reply =
-      paymentDetails[request.id]?.trim() || "";
-
-    if (!reply) {
-      setMessage(
-        "Please enter the payment account details before sending."
+        { status: 500 }
       );
-      return;
     }
 
-    setProcessingId(request.id);
-    setMessage("");
+    const requestList = requests || [];
 
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        setMessage("Admin session expired. Please log in again.");
-        return;
-      }
-
-      const response = await fetch("/api/admin/activation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          action: "reply_payment_details",
-          requestId: request.id,
-          reply,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setMessage(
-          result.error || "Unable to send payment details."
-        );
-        return;
-      }
-
-      setMessage(
-        "Payment details sent to the user successfully. ✅"
-      );
-
-      setPaymentDetails((current) => ({
-        ...current,
-        [request.id]: "",
-      }));
-
-      await loadRequests();
-    } catch (error) {
-      console.error(error);
-
-      setMessage(
-        "Something went wrong while sending payment details."
-      );
-    } finally {
-      setProcessingId(null);
-    }
-  }
-
-  async function openPaymentProof(
-    request: ActivationRequest
-  ) {
-    if (!request.payment_proof_url) {
-      setMessage("No payment screenshot was uploaded.");
-      return;
-    }
-
-    setLoadingProofId(request.id);
-    setMessage("");
-
-    try {
-      const { data, error } = await supabase.storage
-        .from("payment-proofs")
-        .createSignedUrl(request.payment_proof_url, 300);
-
-      if (error || !data?.signedUrl) {
-        console.error("Payment proof error:", error);
-
-        setMessage(
-          "Unable to open the payment screenshot. Check the private storage policy."
-        );
-
-        return;
-      }
-
-      setProofUrls((current) => ({
-        ...current,
-        [request.id]: data.signedUrl,
-      }));
-    } catch (error) {
-      console.error(error);
-
-      setMessage(
-        "Unable to open the payment screenshot."
-      );
-    } finally {
-      setLoadingProofId(null);
-    }
-  }
-
-  async function approvePayment(
-    request: ActivationRequest
-  ) {
-    if (!request.payment_proof_url) {
-      setMessage(
-        "This payment has no screenshot proof. Do not approve it."
-      );
-      return;
-    }
-
-    const packageName = detectPackage(request);
-
-    if (packageName === "UNKNOWN") {
-      setMessage(
-        "Could not detect the requested package. Do not approve this request."
-      );
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Approve this payment?\n\nPackage: ${packageName}\n\nThis will activate the user's TapBumber account.`
+    /*
+     * Get the user account details for every
+     * activation request.
+     */
+    const userIds = Array.from(
+      new Set(
+        requestList
+          .map((request) => request.user_id)
+          .filter(Boolean)
+      )
     );
 
-    if (!confirmed) {
-      return;
-    }
+    const userMap = new Map<
+      string,
+      {
+        full_name: string | null;
+        email: string | null;
+      }
+    >();
 
-    setProcessingId(request.id);
-    setMessage("");
-
-    try {
+    /*
+     * Get names from user_profiles.
+     */
+    if (userIds.length > 0) {
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
+        data: profiles,
+        error: profilesError,
+      } = await supabaseAdmin
+        .from("user_profiles")
+        .select("id, full_name, email")
+        .in("id", userIds);
 
-      if (!session) {
-        setMessage("Admin session expired. Please log in again.");
-        return;
-      }
-
-      const response = await fetch("/api/admin/activation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          action: "approve_payment",
-          requestId: request.id,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setMessage(
-          result.error || "Payment approval failed."
+      if (profilesError) {
+        console.error(
+          "Load user profiles error:",
+          profilesError
         );
-        return;
       }
 
-      setMessage(
-        "Payment approved. User account activated successfully. ✅"
-      );
-
-      await loadRequests();
-    } catch (error) {
-      console.error(error);
-
-      setMessage(
-        "Something went wrong while approving the payment."
-      );
-    } finally {
-      setProcessingId(null);
+      for (const profile of profiles || []) {
+        userMap.set(profile.id, {
+          full_name: profile.full_name || null,
+          email: profile.email || null,
+        });
+      }
     }
-  }
 
-  async function rejectPayment(
-    request: ActivationRequest
-  ) {
-    const reason =
-      rejectionReasons[request.id]?.trim() || "";
+    /*
+     * Get email directly from Supabase Auth as a
+     * fallback / source of truth.
+     *
+     * This means the Admin page can still show
+     * the email even if user_profiles.email is empty.
+     */
+    for (const userId of userIds) {
+      if (
+        userMap.has(userId) &&
+        userMap.get(userId)?.email
+      ) {
+        continue;
+      }
 
-    const confirmed = window.confirm(
-      "Reject this payment proof?\n\nThe user's account will NOT be activated."
+      try {
+        const {
+          data: authUser,
+          error: authError,
+        } = await supabaseAdmin.auth.admin.getUserById(
+          userId
+        );
+
+        if (!authError && authUser?.user) {
+          const existing = userMap.get(userId);
+
+          userMap.set(userId, {
+            full_name:
+              existing?.full_name ||
+              authUser.user.user_metadata?.full_name ||
+              authUser.user.user_metadata?.name ||
+              null,
+            email:
+              existing?.email ||
+              authUser.user.email ||
+              null,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "Auth user lookup error:",
+          error
+        );
+      }
+    }
+
+    /*
+     * Attach account information to each request.
+     */
+    const enrichedRequests = requestList.map(
+      (request) => {
+        const account = userMap.get(request.user_id);
+
+        return {
+          ...request,
+          user_email: account?.email || null,
+          full_name: account?.full_name || null,
+        };
+      }
     );
 
-    if (!confirmed) {
-      return;
+    return NextResponse.json({
+      requests: enrichedRequests,
+    });
+  } catch (error) {
+    console.error(
+      "GET activation requests error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Unable to load activation requests.",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * POST
+ *
+ * Admin actions:
+ * - request_payment_details
+ * - reply_payment_details
+ * - reject_payment
+ * - approve_payment
+ */
+export async function POST(request: NextRequest) {
+  const auth = await requireAdmin(request);
+
+  if (auth.response) {
+    return auth.response;
+  }
+
+  try {
+    const body = await request.json();
+
+    const action = body?.action;
+    const requestId = body?.requestId;
+
+    /*
+     * --------------------------------------------------
+     * REQUEST PAYMENT DETAILS
+     * --------------------------------------------------
+     */
+    if (action === "request_payment_details") {
+      const packageType =
+        body?.packageType?.toString().toLowerCase();
+
+      const userId =
+        body?.userId?.toString().trim();
+
+      if (
+        !userId ||
+        !["standard", "premium"].includes(
+          packageType
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Invalid user or package.",
+          },
+          { status: 400 }
+        );
+      }
+
+      /*
+       * Prevent duplicate active requests.
+       */
+      const { data: existingRequest } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .select(
+            "id, status, message, admin_reply"
+          )
+          .eq("user_id", userId)
+          .in("status", [
+            "pending",
+            "submitted",
+            "under_review",
+            "payment_details_requested",
+          ])
+          .order("created_at", {
+            ascending: false,
+          })
+          .limit(1)
+          .maybeSingle();
+
+      if (existingRequest) {
+        return NextResponse.json(
+          {
+            error:
+              "You already have an active activation request.",
+            request: existingRequest,
+          },
+          { status: 409 }
+        );
+      }
+
+      const amount =
+        packageType === "premium"
+          ? 5000
+          : 3000;
+
+      const packageName =
+        packageType.toUpperCase();
+
+      const message =
+        `Payment details requested for ${packageName} package. Activation fee: ₦${amount.toLocaleString()}.`;
+
+      const { data: newRequest, error } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .insert({
+            user_id: userId,
+            message,
+            status:
+              "payment_details_requested",
+          })
+          .select()
+          .single();
+
+      if (error) {
+        console.error(
+          "Create activation request error:",
+          error
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Unable to create activation request.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: newRequest,
+      });
     }
 
-    setProcessingId(request.id);
-    setMessage("");
+    /*
+     * All remaining actions require requestId.
+     */
+    if (!requestId) {
+      return NextResponse.json(
+        {
+          error:
+            "Activation request ID is required.",
+        },
+        { status: 400 }
+      );
+    }
 
-    try {
+    /*
+     * --------------------------------------------------
+     * GET REQUEST
+     * --------------------------------------------------
+     */
+    const {
+      data: activationRequest,
+      error: requestError,
+    } = await supabaseAdmin
+      .from("activation_requests")
+      .select("*")
+      .eq("id", requestId)
+      .single();
+
+    if (requestError || !activationRequest) {
+      return NextResponse.json(
+        {
+          error:
+            "Activation request not found.",
+        },
+        { status: 404 }
+      );
+    }
+
+    /*
+     * --------------------------------------------------
+     * SEND PAYMENT DETAILS
+     * --------------------------------------------------
+     */
+    if (action === "reply_payment_details") {
+      const reply =
+        body?.reply?.toString().trim() || "";
+
+      if (!reply) {
+        return NextResponse.json(
+          {
+            error:
+              "Payment details cannot be empty.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const { data, error } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .update({
+            admin_reply: reply,
+            status:
+              "payment_details_requested",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", requestId)
+          .select()
+          .single();
+
+      if (error) {
+        console.error(
+          "Send payment details error:",
+          error
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Unable to send payment details.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: data,
+      });
+    }
+
+    /*
+     * --------------------------------------------------
+     * REJECT PAYMENT
+     * --------------------------------------------------
+     */
+    if (action === "reject_payment") {
+      if (
+        ![
+          "submitted",
+          "under_review",
+        ].includes(
+          activationRequest.status
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This payment is not currently awaiting review.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const rejectionReason =
+        body?.rejectionReason
+          ?.toString()
+          .trim() ||
+        "Payment proof could not be verified.";
+
+      const now =
+        new Date().toISOString();
+
+      const { data, error } =
+        await supabaseAdmin
+          .from("activation_requests")
+          .update({
+            status: "rejected",
+            rejection_reason:
+              rejectionReason,
+            admin_reply:
+              `Payment rejected. ${rejectionReason}`,
+            reviewed_by: auth.user?.id,
+            reviewed_at: now,
+            updated_at: now,
+          })
+          .eq("id", requestId)
+          .select()
+          .single();
+
+      if (error) {
+        console.error(
+          "Reject payment error:",
+          error
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Unable to reject payment.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: data,
+      });
+    }
+
+    /*
+     * --------------------------------------------------
+     * APPROVE PAYMENT
+     * --------------------------------------------------
+     */
+    if (action === "approve_payment") {
+      if (
+        ![
+          "submitted",
+          "under_review",
+        ].includes(
+          activationRequest.status
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "This payment is not currently awaiting review.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (
+        !activationRequest.payment_proof_url
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Payment proof is required before approval.",
+          },
+          { status: 400 }
+        );
+      }
+
+      /*
+       * Detect package from the original
+       * activation request message.
+       */
+      const packageMatch =
+        activationRequest.message?.match(
+          /(?:requested for|request for)\s+(STANDARD|PREMIUM)\s+package/i
+        );
+
+      const packageName =
+        packageMatch?.[1]?.toUpperCase();
+
+      if (
+        !packageName ||
+        !["STANDARD", "PREMIUM"].includes(
+          packageName
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not determine the requested package.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const now =
+        new Date().toISOString();
+
+      /*
+       * Activate the user's account.
+       */
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        setMessage("Admin session expired. Please log in again.");
-        return;
-      }
-
-      const response = await fetch("/api/admin/activation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          action: "reject_payment",
-          requestId: request.id,
-          rejectionReason:
-            reason || "Payment proof could not be verified.",
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setMessage(
-          result.error || "Payment rejection failed."
+        error: profileError,
+      } = await supabaseAdmin
+        .from("user_profiles")
+        .update({
+          is_activated: true,
+          package: packageName,
+          activated_at: now,
+          updated_at: now,
+        })
+        .eq(
+          "id",
+          activationRequest.user_id
         );
-        return;
+
+      if (profileError) {
+        console.error(
+          "Activate user profile error:",
+          profileError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Payment was not approved because the user account could not be activated.",
+          },
+          { status: 500 }
+        );
       }
 
-      setMessage(
-        "Payment rejected. The user account remains inactive."
-      );
+      /*
+       * Mark activation request approved.
+       */
+      const {
+        data,
+        error,
+      } = await supabaseAdmin
+        .from("activation_requests")
+        .update({
+          status: "approved",
+          admin_reply:
+            `Payment approved. ${packageName} package activated.`,
+          reviewed_by: auth.user?.id,
+          reviewed_at: now,
+          updated_at: now,
+        })
+        .eq("id", requestId)
+        .select()
+        .single();
 
-      setRejectionReasons((current) => ({
-        ...current,
-        [request.id]: "",
-      }));
+      if (error) {
+        console.error(
+          "Approve activation request error:",
+          error
+        );
 
-      await loadRequests();
-    } catch (error) {
-      console.error(error);
+        return NextResponse.json(
+          {
+            error:
+              "Account was activated, but the activation request could not be updated.",
+          },
+          { status: 500 }
+        );
+      }
 
-      setMessage(
-        "Something went wrong while rejecting the payment."
-      );
-    } finally {
-      setProcessingId(null);
+      return NextResponse.json({
+        success: true,
+        request: data,
+      });
     }
-  }
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-black px-4 py-8 text-white">
-        <div className="mx-auto max-w-xl">
-          <p className="text-center text-gray-300">
-            Loading admin panel...
-          </p>
-        </div>
-      </main>
+    /*
+     * --------------------------------------------------
+     * UNKNOWN ACTION
+     * --------------------------------------------------
+     */
+    return NextResponse.json(
+      {
+        error: "Unknown admin action.",
+      },
+      { status: 400 }
+    );
+  } catch (error) {
+    console.error(
+      "Admin activation API error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          "Something went wrong while processing the request.",
+      },
+      { status: 500 }
     );
   }
-
-  if (!admin) {
-    return (
-      <main className="min-h-screen bg-black px-4 py-8 text-white">
-        <div className="mx-auto max-w-xl">
-          <div className="rounded-2xl border border-red-500/30 bg-red-950/20 p-6 text-center">
-            <h1 className="text-2xl font-bold text-red-400">
-              Access Denied
-            </h1>
-
-            <p className="mt-3 text-gray-300">
-              {message || "Admin account only."}
-            </p>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="min-h-screen bg-black px-4 py-6 text-white">
-      <div className="mx-auto max-w-2xl">
-
-        {/* HEADER */}
-        <div className="mb-6">
-          <p className="text-sm font-bold tracking-widest text-yellow-400">
-            TAPBUMBER ADMIN
-          </p>
-
-          <h1 className="mt-1 text-3xl font-bold">
-            Activation Requests
-          </h1>
-
-          <p className="mt-2 text-sm text-gray-400">
-            Review payment requests and activate approved users.
-          </p>
-        </div>
-
-        {/* MESSAGE */}
-        {message && (
-          <div className="mb-5 rounded-xl border border-yellow-400/30 bg-yellow-400/10 p-4 text-sm text-yellow-300">
-            {message}
-          </div>
-        )}
-
-        {/* REQUESTS */}
-        {requests.length === 0 ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-            <p className="text-gray-300">
-              No pending activation requests.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-
-            {requests.map((request) => {
-              const packageName = detectPackage(request);
-
-              const isPaymentDetailsRequest =
-                request.status ===
-                "payment_details_requested";
-
-              const isSubmitted =
-                request.status === "submitted" ||
-                request.status === "under_review";
-
-              const isProcessing =
-                processingId === request.id;
-
-              return (
-                <div
-                  key={request.id}
-                  className="rounded-2xl border border-white/10 bg-white/5 p-5"
-                >
-
-                  {/* REQUEST HEADER */}
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-lg font-bold">
-                      {packageName} PACKAGE
-                    </h2>
-
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-bold ${
-                        request.status === "submitted"
-                          ? "bg-green-400/10 text-green-400"
-                          : request.status ===
-                              "approved"
-                            ? "bg-blue-400/10 text-blue-400"
-                            : request.status ===
-                                "rejected"
-                              ? "bg-red-400/10 text-red-400"
-                              : "bg-yellow-400/10 text-yellow-400"
-                      }`}
-                    >
-                      {request.status}
-                    </span>
-                  </div>
-
-                  {/* USER INFORMATION */}
-                  <div className="mt-4 space-y-2 text-sm">
-
-                    <p>
-                      <span className="text-gray-400">
-                        User ID:
-                      </span>{" "}
-                      <span className="break-all text-gray-200">
-                        {request.user_id}
-                      </span>
-                    </p>
-
-                    {request.user_email && (
-                      <p>
-                        <span className="text-gray-400">
-                          Email:
-                        </span>{" "}
-                        <span className="text-white">
-                          {request.user_email}
-                        </span>
-                      </p>
-                    )}
-
-                    {request.full_name && (
-                      <p>
-                        <span className="text-gray-400">
-                          Name:
-                        </span>{" "}
-                        <span className="text-white">
-                          {request.full_name}
-                        </span>
-                      </p>
-                    )}
-
-                    <p>
-                      <span className="text-gray-400">
-                        Payment Reference:
-                      </span>{" "}
-                      <span className="text-white">
-                        {request.payment_reference ||
-                          "Not provided"}
-                      </span>
-                    </p>
-
-                    {request.payment_note && (
-                      <p>
-                        <span className="text-gray-400">
-                          Payment Note:
-                        </span>{" "}
-                        <span className="text-white">
-                          {request.payment_note}
-                        </span>
-                      </p>
-                    )}
-
-                    <p>
-                      <span className="text-gray-400">
-                        Submitted:
-                      </span>{" "}
-                      <span className="text-white">
-                        {request.payment_submitted_at
-                          ? new Date(
-                              request.payment_submitted_at
-                            ).toLocaleString()
-                          : request.created_at
-                            ? new Date(
-                                request.created_at
-                              ).toLocaleString()
-                            : "Unknown"}
-                      </span>
-                    </p>
-                  </div>
-
-                  {/* ORIGINAL MESSAGE */}
-                  <div className="mt-4 rounded-xl bg-black/40 p-3 text-sm text-gray-300">
-                    {request.message ||
-                      "No message provided."}
-                  </div>
-
-                  {/* PAYMENT DETAILS REQUEST */}
-                  {isPaymentDetailsRequest && (
-                    <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/5 p-4">
-
-                      <p className="text-sm font-bold text-yellow-400">
-                        💳 SEND PAYMENT DETAILS
-                      </p>
-
-                      <p className="mt-2 text-sm text-gray-400">
-                        Enter the current payment account details
-                        the user should use for this activation.
-                      </p>
-
-                      {request.admin_reply && (
-                        <div className="mt-3 rounded-xl border border-green-400/20 bg-green-400/5 p-3 text-sm text-green-300">
-
-                          <p className="font-bold">
-                            Previously sent:
-                          </p>
-
-                          <p className="mt-1 whitespace-pre-wrap">
-                            {request.admin_reply}
-                          </p>
-
-                        </div>
-                      )}
-
-                      <textarea
-                        value={
-                          paymentDetails[request.id] || ""
-                        }
-                        onChange={(event) =>
-                          updatePaymentDetails(
-                            request.id,
-                            event.target.value
-                          )
-                        }
-                        placeholder={
-                          "Example:\nBank: XXX Bank\nAccount Name: TapBumber\nAccount Number: XXXXXXXX\n\nSend only the current payment details."
-                        }
-                        rows={6}
-                        className="mt-3 w-full rounded-xl border border-white/10 bg-black px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-yellow-400"
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          sendPaymentDetails(request)
-                        }
-                        disabled={isProcessing}
-                        className="mt-3 w-full rounded-xl bg-yellow-400 px-4 py-3 font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isProcessing
-                          ? "SENDING..."
-                          : "SEND PAYMENT DETAILS"}
-                      </button>
-
-                    </div>
-                  )}
-
-                  {/* PAYMENT SUBMITTED */}
-                  {isSubmitted && (
-                    <div className="mt-5 space-y-4">
-
-                      {/* PAYMENT PROOF */}
-                      <div className="rounded-2xl border border-green-400/20 bg-green-400/5 p-4">
-
-                        <p className="text-sm font-bold text-green-400">
-                          📸 PAYMENT PROOF
-                        </p>
-
-                        {request.payment_proof_url ? (
-                          <>
-                            <p className="mt-2 text-sm text-gray-400">
-                              The user has uploaded a payment
-                              screenshot.
-                            </p>
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openPaymentProof(request)
-                              }
-                              disabled={
-                                loadingProofId ===
-                                request.id
-                              }
-                              className="mt-3 w-full rounded-xl border border-green-400/30 bg-green-400/10 px-4 py-3 font-bold text-green-300 disabled:opacity-50"
-                            >
-                              {loadingProofId ===
-                              request.id
-                                ? "OPENING..."
-                                : proofUrls[
-                                      request.id
-                                    ]
-                                  ? "REFRESH PAYMENT SCREENSHOT"
-                                  : "VIEW PAYMENT SCREENSHOT"}
-                            </button>
-
-                            {proofUrls[
-                              request.id
-                            ] && (
-                              <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black">
-
-                                <img
-                                  src={
-                                    proofUrls[
-                                      request.id
-                                    ]
-                                  }
-                                  alt="Payment proof"
-                                  className="max-h-[600px] w-full object-contain"
-                                />
-
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <p className="mt-2 text-sm text-red-300">
-                            No payment screenshot found.
-                          </p>
-                        )}
-
-                      </div>
-
-                      {/* REJECTION REASON */}
-                      <div className="rounded-2xl border border-red-400/20 bg-red-400/5 p-4">
-
-                        <p className="text-sm font-bold text-red-400">
-                          ❌ REJECTION REASON
-                        </p>
-
-                        <p className="mt-2 text-sm text-gray-400">
-                          Optional. Add a reason if the payment
-                          cannot be verified.
-                        </p>
-
-                        <textarea
-                          value={
-                            rejectionReasons[
-                              request.id
-                            ] || ""
-                          }
-                          onChange={(event) =>
-                            updateRejectionReason(
-                              request.id,
-                              event.target.value
-                            )
-                          }
-                          placeholder="Example: Payment screenshot could not be verified."
-                          rows={3}
-                          className="mt-3 w-full rounded-xl border border-white/10 bg-black px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-red-400"
-                        />
-
-                      </div>
-
-                      {/* APPROVE */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          approvePayment(request)
-                        }
-                        disabled={
-                          isProcessing ||
-                          !request.payment_proof_url
-                        }
-                        className="w-full rounded-xl bg-green-500 px-4 py-4 font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isProcessing
-                          ? "PROCESSING..."
-                          : "✅ APPROVE PAYMENT"}
-                      </button>
-
-                      {/* REJECT */}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          rejectPayment(request)
-                        }
-                        disabled={isProcessing}
-                        className="w-full rounded-xl border border-red-500 bg-red-500/10 px-4 py-4 font-bold text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isProcessing
-                          ? "PROCESSING..."
-                          : "❌ REJECT PAYMENT"}
-                      </button>
-
-                    </div>
-                  )}
-
-                  {/* APPROVED */}
-                  {request.status === "approved" && (
-                    <div className="mt-5 rounded-xl border border-green-400/20 bg-green-400/5 p-4 text-center">
-                      <p className="font-bold text-green-400">
-                        ✅ PAYMENT APPROVED
-                      </p>
-
-                      <p className="mt-1 text-sm text-gray-400">
-                        This user's account has been activated.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* REJECTED */}
-                  {request.status === "rejected" && (
-                    <div className="mt-5 rounded-xl border border-red-400/20 bg-red-400/5 p-4">
-
-                      <p className="font-bold text-red-400">
-                        ❌ PAYMENT REJECTED
-                      </p>
-
-                      {request.rejection_reason && (
-                        <p className="mt-2 text-sm text-gray-300">
-                          Reason:{" "}
-                          {request.rejection_reason}
-                        </p>
-                      )}
-
-                    </div>
-                  )}
-
-                </div>
-              );
-            })}
-
-          </div>
-        )}
-      </div>
-    </main>
-  );
 }
